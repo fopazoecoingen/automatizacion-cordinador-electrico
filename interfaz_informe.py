@@ -1,0 +1,587 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from tkinter import font as tkFont
+from datetime import datetime
+from pathlib import Path
+import threading
+from v1.descargar_archivos import descargar_y_descomprimir_zip, meses, buscar_archivo_existente
+from v1.leer_excel import LectorBalance
+
+class InterfazInforme:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Generación de Informe Eléctrico")
+        self.root.geometry("900x700")
+        self.root.configure(bg="#E5E5E5")
+        
+        # Variables
+        self.anyo_desde_var = tk.IntVar(value=datetime.now().year)
+        self.mes_desde_combo = None
+        self.anyo_hasta_var = tk.IntVar(value=datetime.now().year)
+        self.mes_hasta_combo = None
+        self.barra_var = tk.StringVar(value="")
+        self.procesando = False
+        
+        # Configurar estilo
+        self.setup_styles()
+        
+        # Crear panel principal blanco
+        self.create_main_panel()
+        
+        # Crear controles de ventana (simulación de los tres puntos)
+        self.create_window_controls()
+        
+        # Crear sección de selección de período
+        self.create_periodo_section()
+        
+        # Crear sección de configuración
+        self.create_config_section()
+        
+        # Crear sección de selección de archivos
+        self.create_file_section()
+        
+        # Crear sección de progreso
+        self.create_progress_section()
+        
+        # Crear botón de crear informe
+        self.create_action_button()
+    
+    def setup_styles(self):
+        """Configurar estilos personalizados"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Configurar estilo para el botón púrpura
+        style.configure('Purple.TButton',
+                       background='#7B2CBF',
+                       foreground='white',
+                       borderwidth=0,
+                       focuscolor='none',
+                       padding=10)
+        style.map('Purple.TButton',
+                 background=[('active', '#6A1B9A'), ('pressed', '#5A1A8A')])
+    
+    def create_window_controls(self):
+        """Crear controles de ventana simulados (tres puntos)"""
+        controls_frame = tk.Frame(self.root, bg="#E5E5E5")
+        controls_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        for i in range(3):
+            dot = tk.Label(controls_frame, text="●", bg="#E5E5E5", 
+                          fg="#999999", font=("Arial", 8))
+            dot.pack(side=tk.LEFT, padx=2)
+    
+    def create_main_panel(self):
+        """Crear panel principal blanco"""
+        self.main_panel = tk.Frame(self.root, bg="white", relief=tk.FLAT)
+        self.main_panel.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+    
+    def create_periodo_section(self):
+        """Crear sección de selección de período (año y mes)"""
+        periodo_frame = tk.Frame(self.main_panel, bg="white")
+        periodo_frame.pack(fill=tk.X, padx=30, pady=20)
+        
+        # Título
+        titulo_label = tk.Label(periodo_frame, text="Período", bg="white", 
+                              font=("Arial", 10), anchor="w")
+        titulo_label.grid(row=0, column=0, padx=10, pady=(0, 5), sticky="w")
+        
+        # Frame para rango de fechas
+        seleccion_frame = tk.Frame(periodo_frame, bg="white")
+        seleccion_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        
+        meses_lista = [f"{i:02d} - {meses[i]}" for i in range(1, 13)]
+        
+        # DESDE
+        desde_label = tk.Label(seleccion_frame, text="Desde:", bg="white", 
+                           font=("Arial", 10, "bold"), anchor="w")
+        desde_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        
+        año_desde_spinbox = tk.Spinbox(seleccion_frame, 
+                                       from_=2020, 
+                                       to=2030, 
+                                       textvariable=self.anyo_desde_var,
+                                       font=("Arial", 10),
+                                       width=10)
+        año_desde_spinbox.grid(row=0, column=1, padx=(0, 10), sticky="w")
+        
+        self.mes_desde_combo = ttk.Combobox(seleccion_frame,
+                                           values=meses_lista,
+                                           state="readonly",
+                                           font=("Arial", 10),
+                                           width=18)
+        self.mes_desde_combo.grid(row=0, column=2, padx=(0, 30), sticky="w")
+        self.mes_desde_combo.current(datetime.now().month - 1)
+        
+        # HASTA
+        hasta_label = tk.Label(seleccion_frame, text="Hasta:", bg="white", 
+                           font=("Arial", 10, "bold"), anchor="w")
+        hasta_label.grid(row=0, column=3, padx=(0, 10), sticky="w")
+        
+        año_hasta_spinbox = tk.Spinbox(seleccion_frame, 
+                                       from_=2020, 
+                                       to=2030, 
+                                       textvariable=self.anyo_hasta_var,
+                                       font=("Arial", 10),
+                                       width=10)
+        año_hasta_spinbox.grid(row=0, column=4, padx=(0, 10), sticky="w")
+        
+        self.mes_hasta_combo = ttk.Combobox(seleccion_frame,
+                                          values=meses_lista,
+                                          state="readonly",
+                                          font=("Arial", 10),
+                                          width=18)
+        self.mes_hasta_combo.grid(row=0, column=5, sticky="w")
+        self.mes_hasta_combo.current(datetime.now().month - 1)
+        
+        periodo_frame.grid_columnconfigure(0, weight=1)
+    
+    def create_config_section(self):
+        """Crear sección de configuración con inputs de texto"""
+        config_frame = tk.Frame(self.main_panel, bg="white")
+        config_frame.pack(fill=tk.X, padx=30, pady=20)
+        
+        labels = ["Empresa", "Barra"]
+        default_values = ["VIENTOS_DE_RENAICO", ""]
+        
+        self.entries = {}
+        
+        for i, (label, default) in enumerate(zip(labels, default_values)):
+            # Label
+            lbl = tk.Label(config_frame, text=label, bg="white",
+                          font=("Arial", 10), anchor="w")
+            lbl.grid(row=0, column=i, padx=10, pady=(0, 5), sticky="w")
+            
+            # Entry (campo de texto)
+            entry = tk.Entry(config_frame, width=25, font=("Arial", 10))
+            if default:
+                entry.insert(0, default)
+            entry.grid(row=1, column=i, padx=10, pady=5, sticky="ew")
+            self.entries[label] = entry
+        
+        # Configurar pesos de columnas
+        for i in range(2):
+            config_frame.grid_columnconfigure(i, weight=1)
+        
+        # Nota sobre barra
+        nota_label = tk.Label(config_frame, 
+                            text="Nota: Deje 'Barra' vacío para procesar todas las barras",
+                            bg="white", font=("Arial", 8), fg="#666666", anchor="w")
+        nota_label.grid(row=2, column=0, columnspan=2, padx=10, pady=(5, 0), sticky="w")
+    
+    def create_file_section(self):
+        """Crear sección de selección de archivos"""
+        file_frame = tk.Frame(self.main_panel, bg="white")
+        file_frame.pack(fill=tk.X, padx=30, pady=20)
+        
+        # Destino del informe
+        self.create_file_input(file_frame, "Ruta de destino del informe", 
+                              "", 0)
+    
+    def create_file_input(self, parent, label_text, default_path, row):
+        """Crear un campo de entrada de archivo con botón de exploración"""
+        # Label
+        lbl = tk.Label(parent, text=label_text, bg="white", 
+                      font=("Arial", 10), anchor="w")
+        lbl.grid(row=row*2, column=0, padx=10, pady=(0, 5), sticky="w")
+        
+        # Frame para entrada y botón
+        input_frame = tk.Frame(parent, bg="white")
+        input_frame.grid(row=row*2+1, column=0, padx=10, pady=5, sticky="ew")
+        
+        # Campo de texto
+        entry = tk.Entry(input_frame, font=("Arial", 10), width=50)
+        if default_path:
+            entry.insert(0, default_path)
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        # Guardar referencia al entry
+        if row == 0:
+            self.destino_entry = entry
+        
+        # Botón de exploración
+        browse_btn = tk.Button(input_frame, text="▼", font=("Arial", 8),
+                              bg="white", fg="#666666", relief=tk.FLAT,
+                              width=3, command=lambda: self.browse_file(entry, label_text))
+        browse_btn.pack(side=tk.RIGHT)
+        
+        parent.grid_columnconfigure(0, weight=1)
+    
+    def browse_file(self, entry_widget, file_type):
+        """Abrir diálogo de selección de archivo"""
+        filename = filedialog.asksaveasfilename(
+            title="Seleccionar Destino",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            entry_widget.delete(0, tk.END)
+            entry_widget.insert(0, filename)
+    
+    def create_progress_section(self):
+        """Crear sección de progreso"""
+        progress_frame = tk.Frame(self.main_panel, bg="white")
+        progress_frame.pack(fill=tk.X, padx=30, pady=20)
+        
+        # Label de progreso
+        self.progress_text_label = tk.Label(progress_frame, 
+                                  text="Esperando inicio del proceso...",
+                                  bg="white", font=("Arial", 10), anchor="w")
+        self.progress_text_label.pack(fill=tk.X, pady=(0, 10))
+        
+        # Barra de progreso
+        self.progress_var = tk.DoubleVar()
+        self.progress_var.set(0)
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, 
+                                           variable=self.progress_var,
+                                           maximum=100,
+                                           length=400,
+                                           mode='determinate',
+                                           style='TProgressbar')
+        self.progress_bar.pack(fill=tk.X)
+        
+        # Configurar color de la barra de progreso
+        style = ttk.Style()
+        style.configure("TProgressbar",
+                       background='#20B2AA',
+                       troughcolor='#E0E0E0',
+                       borderwidth=0,
+                       lightcolor='#20B2AA',
+                       darkcolor='#20B2AA')
+    
+    def create_action_button(self):
+        """Crear botón de crear informe"""
+        button_frame = tk.Frame(self.main_panel, bg="white")
+        button_frame.pack(fill=tk.X, padx=30, pady=20)
+        
+        # Frame para alinear el botón a la derecha
+        right_frame = tk.Frame(button_frame, bg="white")
+        right_frame.pack(side=tk.RIGHT)
+        
+        # Botón púrpura
+        self.create_btn = tk.Button(right_frame, 
+                                    text="Crear Informe",
+                                    font=("Arial", 11, "bold"),
+                                    bg="#7B2CBF",
+                                    fg="white",
+                                    relief=tk.FLAT,
+                                    padx=30,
+                                    pady=10,
+                                    cursor="hand2",
+                                    command=self.crear_informe)
+        self.create_btn.pack()
+        
+        # Efecto hover
+        self.create_btn.bind("<Enter>", lambda e: self.create_btn.config(bg="#6A1B9A"))
+        self.create_btn.bind("<Leave>", lambda e: self.create_btn.config(bg="#7B2CBF"))
+    
+    def crear_informe(self):
+        """Función que se ejecuta al hacer clic en Crear Informe"""
+        if self.procesando:
+            messagebox.showwarning("Proceso en curso", 
+                                 "Ya hay un proceso en ejecución. Por favor espere.")
+            return
+        
+        # Validar campos - DESDE
+        anyo_desde = self.anyo_desde_var.get()
+        valor_mes_desde = self.mes_desde_combo.get()
+        
+        if not valor_mes_desde:
+            messagebox.showerror("Error", "Por favor seleccione un mes de inicio.")
+            return
+        
+        try:
+            mes_desde = int(valor_mes_desde.split(" - ")[0])
+            if mes_desde < 1 or mes_desde > 12:
+                messagebox.showerror("Error", f"Mes inválido: {mes_desde}. Debe estar entre 1 y 12.")
+                return
+        except (ValueError, IndexError) as e:
+            messagebox.showerror("Error", f"Error al obtener el mes de inicio: {e}")
+            return
+        
+        # Validar campos - HASTA
+        anyo_hasta = self.anyo_hasta_var.get()
+        valor_mes_hasta = self.mes_hasta_combo.get()
+        
+        if not valor_mes_hasta:
+            messagebox.showerror("Error", "Por favor seleccione un mes de fin.")
+            return
+        
+        try:
+            mes_hasta = int(valor_mes_hasta.split(" - ")[0])
+            if mes_hasta < 1 or mes_hasta > 12:
+                messagebox.showerror("Error", f"Mes inválido: {mes_hasta}. Debe estar entre 1 y 12.")
+                return
+        except (ValueError, IndexError) as e:
+            messagebox.showerror("Error", f"Error al obtener el mes de fin: {e}")
+            return
+        
+        # Validar años
+        if anyo_desde < 2020 or anyo_desde > 2030:
+            messagebox.showerror("Error", f"Año de inicio inválido: {anyo_desde}. Debe estar entre 2020 y 2030.")
+            return
+        
+        if anyo_hasta < 2020 or anyo_hasta > 2030:
+            messagebox.showerror("Error", f"Año de fin inválido: {anyo_hasta}. Debe estar entre 2020 y 2030.")
+            return
+        
+        # Validar que "Desde" sea anterior o igual a "Hasta"
+        fecha_desde = anyo_desde * 12 + mes_desde
+        fecha_hasta = anyo_hasta * 12 + mes_hasta
+        
+        if fecha_desde > fecha_hasta:
+            messagebox.showerror("Error", 
+                               f"La fecha de inicio ({meses[mes_desde]} {anyo_desde}) debe ser anterior o igual "
+                               f"a la fecha de fin ({meses[mes_hasta]} {anyo_hasta}).")
+            return
+        
+        # Mostrar información de depuración
+        print(f"[DEBUG] Procesando informe por rango:")
+        print(f"  Desde: {meses[mes_desde]} {anyo_desde}")
+        print(f"  Hasta: {meses[mes_hasta]} {anyo_hasta}")
+        
+        ruta_destino = self.destino_entry.get().strip()
+        if not ruta_destino:
+            messagebox.showerror("Error", "Por favor seleccione una ruta de destino.")
+            return
+        
+        nombre_barra = self.entries["Barra"].get().strip()
+        nombre_empresa = self.entries["Empresa"].get().strip()
+        
+        # Iniciar proceso en hilo separado
+        self.procesando = True
+        self.create_btn.config(state=tk.DISABLED, text="Procesando...")
+        self.progress_var.set(0)
+        self.progress_text_label.config(text="Iniciando proceso...")
+        
+        thread = threading.Thread(target=self.procesar_informe_thread, 
+                                 args=(anyo_desde, mes_desde, anyo_hasta, mes_hasta, 
+                                       ruta_destino, nombre_barra, nombre_empresa), 
+                                 daemon=True)
+        thread.start()
+    
+    def procesar_informe_thread(self, anyo_desde, mes_desde, anyo_hasta, mes_hasta, 
+                                ruta_destino, nombre_barra, nombre_empresa):
+        """Procesar el informe en un hilo separado para un rango de fechas"""
+        try:
+            # Generar lista de meses a procesar
+            meses_a_procesar = []
+            anyo_actual = anyo_desde
+            mes_actual = mes_desde
+            
+            while True:
+                meses_a_procesar.append((anyo_actual, mes_actual))
+                
+                # Si llegamos al mes final, terminar
+                if anyo_actual == anyo_hasta and mes_actual == mes_hasta:
+                    break
+                
+                # Avanzar al siguiente mes
+                mes_actual += 1
+                if mes_actual > 12:
+                    mes_actual = 1
+                    anyo_actual += 1
+            
+            total_meses = len(meses_a_procesar)
+            print(f"[INFO] Procesando {total_meses} mes(es) en el rango")
+            
+            # Procesar cada mes
+            for idx, (anyo, mes) in enumerate(meses_a_procesar):
+                self.procesar_mes(anyo, mes, ruta_destino, nombre_barra, nombre_empresa, 
+                                 idx + 1, total_meses)
+            
+            # Mensaje final
+            self.root.after(0, lambda: self.progress_var.set(100))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"✓ Proceso completado para {total_meses} mes(es)"))
+            
+            nombre_mes_desde = meses[mes_desde]
+            nombre_mes_hasta = meses[mes_hasta]
+            mensaje = f"Informe generado exitosamente.\n\n"
+            mensaje += f"Período: {nombre_mes_desde} {anyo_desde} - {nombre_mes_hasta} {anyo_hasta}\n"
+            mensaje += f"Total de meses procesados: {total_meses}\n"
+            if nombre_empresa:
+                mensaje += f"Empresa: {nombre_empresa}\n"
+            if nombre_barra:
+                mensaje += f"Barra: {nombre_barra}\n"
+            if not nombre_barra and not nombre_empresa:
+                mensaje += f"Barras: Todas (agrupadas)\n"
+            mensaje += f"Archivo: {ruta_destino}"
+            
+            self.root.after(0, lambda: messagebox.showinfo("Éxito", mensaje))
+            
+        except Exception as e:
+            error_msg = f"Error durante el procesamiento: {str(e)}"
+            print(f"[ERROR] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+        finally:
+            self.procesando = False
+            self.root.after(0, lambda: self.create_btn.config(state=tk.NORMAL, text="Crear Informe"))
+            self.root.after(0, lambda: self.progress_var.set(0))
+    
+    def procesar_mes(self, anyo, mes, ruta_destino, nombre_barra, nombre_empresa, 
+                     mes_actual, total_meses):
+        """Procesar un mes individual del rango"""
+        try:
+            nombre_mes = meses[mes]
+            print(f"\n[INFO] Procesando mes {mes_actual}/{total_meses}: {nombre_mes} {anyo}")
+            
+            # Calcular progreso base para este mes (distribuir 100% entre todos los meses)
+            progreso_base = int((mes_actual - 1) * 100 / total_meses)
+            progreso_por_mes = int(100 / total_meses)
+            
+            def calcular_progreso(porcentaje_mes):
+                """Calcular el progreso global basado en el progreso de este mes"""
+                return progreso_base + int(porcentaje_mes * progreso_por_mes / 100)
+            
+            # Paso 0: Validar estructura de carpetas (solo una vez)
+            if mes_actual == 1:
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(2)))
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text="Validando estructura de carpetas..."))
+                
+                from pathlib import Path
+                carpeta_bd = Path("bd_data")
+                carpeta_descomprimidos = carpeta_bd / "descomprimidos"
+                
+                if not carpeta_bd.exists():
+                    carpeta_bd.mkdir(exist_ok=True)
+                    self.root.after(0, lambda: self.progress_text_label.config(
+                        text=f"✓ Carpeta 'bd_data' creada"))
+                
+                if not carpeta_descomprimidos.exists():
+                    carpeta_descomprimidos.mkdir(parents=True, exist_ok=True)
+                    self.root.after(0, lambda: self.progress_text_label.config(
+                        text=f"✓ Carpeta 'descomprimidos' creada"))
+            
+            # Paso 1: Verificar si el archivo ya existe
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(5)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] Verificando archivo para {nombre_mes} {anyo}..."))
+            
+            archivo_existente = buscar_archivo_existente(anyo, mes)
+            
+            if archivo_existente:
+                tamaño_mb = archivo_existente.stat().st_size / (1024 * 1024)
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] ✓ Archivo encontrado: {archivo_existente.name} ({tamaño_mb:.2f} MB)"))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(15)))
+            else:
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] Archivo no encontrado. Iniciando descarga..."))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(10)))
+            
+            # Paso 2: Descargar/descomprimir archivo
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] Descargando y descomprimiendo para {nombre_mes} {anyo}..."))
+            
+            ruta_zip, ruta_descomprimida, codigo_error = descargar_y_descomprimir_zip(anyo, mes)
+            
+            if not ruta_zip:
+                if codigo_error == 403:
+                    self.root.after(0, lambda: self.progress_text_label.config(
+                        text=f"[{mes_actual}/{total_meses}] ✗ Error 403: Contenido no disponible para {nombre_mes} {anyo}"))
+                    print(f"[WARNING] Error 403 para {nombre_mes} {anyo}, continuando con siguiente mes...")
+                    return  # Continuar con el siguiente mes
+                else:
+                    self.root.after(0, lambda: self.progress_text_label.config(
+                        text=f"[{mes_actual}/{total_meses}] ✗ Error al descargar para {nombre_mes} {anyo}"))
+                    print(f"[WARNING] Error al descargar para {nombre_mes} {anyo}, continuando con siguiente mes...")
+                    return  # Continuar con el siguiente mes
+            
+            # Mostrar información del archivo descargado
+            from pathlib import Path
+            if ruta_zip:
+                tamaño_zip = Path(ruta_zip).stat().st_size / (1024 * 1024)
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] ✓ ZIP disponible: {Path(ruta_zip).name} ({tamaño_zip:.2f} MB)"))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(25)))
+            
+            if ruta_descomprimida:
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] ✓ Descomprimido: {Path(ruta_descomprimida).name}"))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(30)))
+            
+            # Paso 3: Buscar archivo Balance
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(35)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] Buscando archivo Balance..."))
+            
+            lector = LectorBalance(anyo, mes)
+            
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(40)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] ✓ Balance encontrado: {lector.ruta_archivo.name}"))
+            
+            # Paso 4: Leer Excel
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(45)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] Leyendo hoja 'Balance Valorizado'..."))
+            
+            # Dejar que detecte automáticamente la fila de encabezados
+            df_balance = lector.leer_balance_valorizado(header=None)
+            
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(55)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] ✓ Datos leídos: {len(df_balance)} filas"))
+            
+            # Paso 5: Guardar en la ruta especificada
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(70)))
+            
+            # Determinar qué filtros aplicar
+            if nombre_barra or nombre_empresa:
+                mensaje_filtro = []
+                if nombre_empresa:
+                    mensaje_filtro.append(f"empresa: {nombre_empresa}")
+                if nombre_barra:
+                    mensaje_filtro.append(f"barra: {nombre_barra}")
+                
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] Filtrando datos por {', '.join(mensaje_filtro)}..."))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
+                exito = lector.guardar_en_plantilla(df_balance, 
+                                                   ruta_plantilla=ruta_destino,
+                                                   nombre_barra=nombre_barra if nombre_barra else None,
+                                                   nombre_empresa=nombre_empresa if nombre_empresa else None)
+            else:
+                # Agrupar todas las barras
+                self.root.after(0, lambda: self.progress_text_label.config(
+                    text=f"[{mes_actual}/{total_meses}] Agrupando datos por barra..."))
+                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
+                exito = lector.guardar_en_plantilla(df_balance, 
+                                                   ruta_plantilla=ruta_destino)
+            
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(85)))
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] ✓ Guardado en hoja '{nombre_mes}-{anyo}'"))
+            
+            if exito:
+                print(f"[OK] Mes {mes_actual}/{total_meses} ({nombre_mes} {anyo}) procesado exitosamente")
+            else:
+                print(f"[ERROR] Error al guardar datos para {nombre_mes} {anyo}")
+        
+        except FileNotFoundError as e:
+            print(f"[WARNING] Archivo no encontrado para {nombre_mes} {anyo}: {str(e)}")
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] ✗ Archivo no encontrado para {nombre_mes} {anyo}"))
+        
+        except Exception as e:
+            print(f"[ERROR] Error procesando {nombre_mes} {anyo}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, lambda: self.progress_text_label.config(
+                text=f"[{mes_actual}/{total_meses}] ✗ Error: {str(e)[:50]}..."))
+
+
+def main():
+    root = tk.Tk()
+    app = InterfazInforme(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

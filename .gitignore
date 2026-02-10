@@ -71,3 +71,13 @@ config.local.py
 informe_*.xlsx
 resultado_*.xlsx
 *_procesado.xlsx
+
+# Build de ejecutables
+build/
+dist/
+*.spec
+*.exe
+
+# Paquetes de distribución
+Paquete Distribucion/
+Generador_Informe_Electrico.zip

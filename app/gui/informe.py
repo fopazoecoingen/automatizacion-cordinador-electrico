@@ -10,6 +10,7 @@ from core.descargar_archivos import (
     meses,
 )
 from core.leer_excel import LectorBalance
+from core.plantilla_cliente import escribir_total_en_resultado
 
 
 class InterfazInforme:
@@ -42,7 +43,7 @@ class InterfazInforme:
         # Crear sección de configuración
         self.create_config_section()
 
-        # Crear sección de selección de archivos
+        # Crear sección de selección de archivos (plantilla y destino)
         self.create_file_section()
 
         # Crear sección de progreso
@@ -208,14 +209,36 @@ class InterfazInforme:
         nota_label.grid(row=2, column=0, columnspan=2, padx=10, pady=(5, 0), sticky="w")
 
     def create_file_section(self) -> None:
-        """Crear sección de selección de archivos."""
+        """Crear sección de selección de archivos (plantilla y archivo de salida)."""
         file_frame = tk.Frame(self.main_panel, bg="white")
         file_frame.pack(fill=tk.X, padx=30, pady=20)
 
-        # Destino del informe
-        self.create_file_input(file_frame, "Ruta de destino del informe", "", 0)
+        # Plantilla base del cliente
+        self.create_file_input(
+            file_frame,
+            "Plantilla base del cliente",
+            "",
+            0,
+            modo="open",
+        )
 
-    def create_file_input(self, parent, label_text: str, default_path: str, row: int) -> None:
+        # Destino del informe (copia basada en la plantilla)
+        self.create_file_input(
+            file_frame,
+            "Ruta de destino del informe",
+            "",
+            1,
+            modo="save",
+        )
+
+    def create_file_input(
+        self,
+        parent,
+        label_text: str,
+        default_path: str,
+        row: int,
+        modo: str = "open",
+    ) -> None:
         """Crear un campo de entrada de archivo con botón de exploración."""
         # Label
         lbl = tk.Label(
@@ -238,7 +261,9 @@ class InterfazInforme:
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
         # Guardar referencia al entry
-        if row == 0:
+        if label_text.startswith("Plantilla"):
+            self.plantilla_entry = entry
+        elif label_text.startswith("Ruta de destino"):
             self.destino_entry = entry
 
         # Botón de exploración
@@ -250,19 +275,26 @@ class InterfazInforme:
             fg="#666666",
             relief=tk.FLAT,
             width=3,
-            command=lambda: self.browse_file(entry, label_text),
+            command=lambda: self.browse_file(entry, label_text, modo),
         )
         browse_btn.pack(side=tk.RIGHT)
 
         parent.grid_columnconfigure(0, weight=1)
 
-    def browse_file(self, entry_widget, file_type: str) -> None:  # noqa: ARG002
+    def browse_file(self, entry_widget, file_type: str, modo: str) -> None:
         """Abrir diálogo de selección de archivo."""
-        filename = filedialog.asksaveasfilename(
-            title="Seleccionar Destino",
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-        )
+        if modo == "open":
+            filename = filedialog.askopenfilename(
+                title="Seleccionar plantilla",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            )
+        else:
+            filename = filedialog.asksaveasfilename(
+                title="Seleccionar destino del informe",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            )
 
         if filename:
             entry_widget.delete(0, tk.END)
@@ -421,9 +453,18 @@ class InterfazInforme:
         print(f"  Desde: {meses[mes_desde]} {anyo_desde}")
         print(f"  Hasta: {meses[mes_hasta]} {anyo_hasta}")
 
-        ruta_destino = self.destino_entry.get().strip()
+        ruta_plantilla = getattr(self, "plantilla_entry", None)
+        ruta_destino_entry = getattr(self, "destino_entry", None)
+
+        ruta_plantilla = ruta_plantilla.get().strip() if ruta_plantilla else ""
+        ruta_destino = ruta_destino_entry.get().strip() if ruta_destino_entry else ""
+
+        if not ruta_plantilla:
+            messagebox.showerror("Error", "Por favor seleccione la plantilla base del cliente.")
+            return
+
         if not ruta_destino:
-            messagebox.showerror("Error", "Por favor seleccione una ruta de destino.")
+            messagebox.showerror("Error", "Por favor seleccione una ruta de destino para el informe.")
             return
 
         nombre_barra = self.entries["Barra"].get().strip()
@@ -442,6 +483,7 @@ class InterfazInforme:
                 mes_desde,
                 anyo_hasta,
                 mes_hasta,
+                ruta_plantilla,
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
@@ -456,12 +498,22 @@ class InterfazInforme:
         mes_desde: int,
         anyo_hasta: int,
         mes_hasta: int,
+        ruta_plantilla: str,
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
     ) -> None:
         """Procesar el informe en un hilo separado para un rango de fechas."""
         try:
+            # Asegurar que el archivo destino exista como copia de la plantilla
+            ruta_destino_path = Path(ruta_destino)
+            ruta_destino_path.parent.mkdir(parents=True, exist_ok=True)
+            # Copiar plantilla solo una vez, al inicio del proceso
+            from shutil import copyfile
+
+            copyfile(ruta_plantilla, ruta_destino)
+            print(f"[INFO] Plantilla copiada a destino: {ruta_destino}")
+
             # Generar lista de meses a procesar
             meses_a_procesar = []
             anyo_actual = anyo_desde
@@ -488,6 +540,7 @@ class InterfazInforme:
                 self.procesar_mes(
                     anyo,
                     mes,
+                    ruta_destino,
                     ruta_destino,
                     nombre_barra,
                     nombre_empresa,
@@ -538,6 +591,7 @@ class InterfazInforme:
         self,
         anyo: int,
         mes: int,
+        ruta_plantilla_destino: str,  # noqa: ARG002 - se usa como referencia lógica
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
@@ -742,11 +796,48 @@ class InterfazInforme:
                 ),
             )
 
-            # Paso 5: Guardar en la ruta especificada
+            # Paso 5: Calcular total monetario y escribir en plantilla del cliente
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(70)))
 
-            # Determinar qué filtros aplicar
+            # Preparar DataFrame filtrado como en guardar_en_plantilla
+            columna_barra = None
+            columna_monetario = None
+            columna_empresa = None
+
+            for col in df_balance.columns:
+                col_lower = str(col).lower()
+                if col_lower == "barra":
+                    columna_barra = col
+                elif col_lower == "monetario":
+                    columna_monetario = col
+                elif col_lower in ("nombre_corto_empresa", "nombre corto empresa"):
+                    columna_empresa = col
+
+            if columna_monetario is None:
+                print("[ERROR] No se encontró la columna 'monetario' en el DataFrame")
+                return
+
             if nombre_barra or nombre_empresa:
+                df_guardar = df_balance.copy()
+
+                if nombre_empresa:
+                    if columna_empresa is None:
+                        print("[ERROR] No se encontró la columna 'nombre_corto_empresa'")
+                        return
+                    df_guardar = df_guardar[
+                        df_guardar[columna_empresa].astype(str).str.lower()
+                        == nombre_empresa.lower()
+                    ]
+
+                if nombre_barra:
+                    if columna_barra is None:
+                        print("[ERROR] No se encontró la columna 'barra'")
+                        return
+                    df_guardar = df_guardar[
+                        df_guardar[columna_barra].astype(str).str.lower()
+                        == nombre_barra.lower()
+                    ]
+
                 mensaje_filtro = []
                 if nombre_empresa:
                     mensaje_filtro.append(f"empresa: {nombre_empresa}")
@@ -762,36 +853,45 @@ class InterfazInforme:
                         )
                     ),
                 )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
-                exito = lector.guardar_en_plantilla(
-                    df_balance,
-                    ruta_plantilla=ruta_destino,
-                    nombre_barra=nombre_barra if nombre_barra else None,
-                    nombre_empresa=nombre_empresa if nombre_empresa else None,
-                )
             else:
-                # Agrupar todas las barras
+                df_guardar = df_balance
                 self.root.after(
                     0,
                     lambda: self.progress_text_label.config(
                         text=(
-                            f"[{mes_actual}/{total_meses}] Agrupando datos por barra..."
+                            f"[{mes_actual}/{total_meses}] Calculando total monetario "
+                            "para todas las barras..."
                         )
                     ),
                 )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
-                exito = lector.guardar_en_plantilla(
-                    df_balance,
-                    ruta_plantilla=ruta_destino,
-                )
+
+            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
+
+            # Calcular total monetario
+            total_monetario = (
+                df_guardar[columna_monetario].dropna().astype(float).sum()
+            )
+            print(
+                f"[INFO] Total monetario para {nombre_mes} {anyo}: "
+                f"{total_monetario:,.2f}"
+            )
+
+            # Escribir en plantilla del cliente mediante Excel COM
+            escribir_total_en_resultado(
+                ruta_destino,
+                anyo,
+                mes,
+                total_monetario,
+            )
+            exito = True
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(85)))
             self.root.after(
                 0,
                 lambda: self.progress_text_label.config(
                     text=(
-                        f"[{mes_actual}/{total_meses}] ✓ Guardado en hoja "
-                        f"'{nombre_mes}-{anyo}'"
+                        f"[{mes_actual}/{total_meses}] ✓ Guardado en hoja Resultado "
+                        f"para {nombre_mes} {anyo}"
                     )
                 ),
             )

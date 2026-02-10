@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from pathlib import Path
 from typing import Optional, Dict, List, Union
+from datetime import datetime, date
 
 from core.descargar_archivos import meses
 
@@ -506,9 +507,10 @@ class LectorBalance:
         try:
             ruta_plantilla = Path(ruta_plantilla)
 
-            # Crear nombre de la hoja: "mes-año" (ej: "Diciembre-2025")
+            # Crear nombre de la hoja destino.
+            # Para plantillas de cliente se usa siempre la hoja "Resultado".
             nombre_mes = meses[self.mes]
-            nombre_hoja = f"{nombre_mes}-{self.anyo}"
+            nombre_hoja = "Resultado"
 
             print(f"\n[OK] Guardando datos en plantilla: {ruta_plantilla}")
             print(f"  Hoja: {nombre_hoja}")
@@ -581,7 +583,32 @@ class LectorBalance:
                 if "Sheet" in wb.sheetnames:
                     wb.remove(wb["Sheet"])
 
-            # Crear o sobrescribir la hoja
+            # Si la plantilla ya tiene una hoja "Resultado", escribir solo los
+            # totales en la celda correspondiente al mes, sin destruir el diseño.
+            if "Resultado" in wb.sheetnames:
+                ws_resultado = wb["Resultado"]
+                try:
+                    self._escribir_resumen_en_hoja_resultado(
+                        ws_resultado,
+                        df_guardar,
+                        nombre_mes,
+                        self.anyo,
+                        columna_monetario,
+                    )
+                    wb.save(ruta_plantilla)
+                    wb.close()
+                    print("[OK] Datos de resumen escritos en hoja 'Resultado' existente")
+                    return True
+                except Exception as e:
+                    print(
+                        "[ERROR] No se pudo escribir en hoja 'Resultado' existente: "
+                        f"{e}"
+                    )
+                    wb.close()
+                    return False
+
+            # Si no hay una hoja 'Resultado', usar el comportamiento estándar:
+            # crear/actualizar la hoja y volcar la tabla completa.
             if nombre_hoja in wb.sheetnames:
                 ws = wb[nombre_hoja]
                 # Limpiar la hoja existente
@@ -593,7 +620,11 @@ class LectorBalance:
 
             # Escribir encabezados
             encabezados = list(df_guardar.columns)
-            print(f"  Guardando {len(encabezados)} columnas: {', '.join([str(col) for col in encabezados[:15]])}...")
+            print(
+                "  Guardando "
+                f"{len(encabezados)} columnas: "
+                f"{', '.join([str(col) for col in encabezados[:15]])}..."
+            )
             ws.append(encabezados)
 
             # Formatear encabezados
@@ -654,6 +685,121 @@ class LectorBalance:
 
             traceback.print_exc()
             return False
+
+    def _escribir_resumen_en_hoja_resultado(
+        self,
+        ws,
+        df_guardar: pd.DataFrame,
+        nombre_mes: str,
+        anyo: int,
+        columna_monetario,
+    ) -> None:
+        """
+        Escribe el total monetario del DataFrame en la hoja 'Resultado' de una
+        plantilla existente, en la intersección:
+        - Fila del concepto "TOTAL INGRESOS POR POTENCIA FIRME CLP"
+        - Columna del mes/año correspondiente (por ejemplo, 'ene-25').
+        """
+        # Calcular total monetario del DataFrame filtrado/agrupado
+        total_monetario = (
+            df_guardar[columna_monetario].dropna().astype(float).sum()
+        )
+        print(f"  Total monetario a escribir en plantilla: {total_monetario:,.2f}")
+
+        # Construir encabezado de mes esperado (ej: 'ene-25')
+        meses_abrev = {
+            1: "ene",
+            2: "feb",
+            3: "mar",
+            4: "abr",
+            5: "may",
+            6: "jun",
+            7: "jul",
+            8: "ago",
+            9: "sep",
+            10: "oct",
+            11: "nov",
+            12: "dic",
+        }
+        encabezado_mes = f"{meses_abrev[self.mes]}-{str(anyo)[-2:]}"
+        print(f"  Buscando columna de mes con encabezado: '{encabezado_mes}'")
+
+        # 1) Encontrar columna del mes en las primeras filas (típicamente fila de encabezados)
+        col_mes_idx = None
+        fila_encabezados_max = 15
+        for fila in ws.iter_rows(min_row=1, max_row=fila_encabezados_max):
+            for cell in fila:
+                raw = cell.value
+                # Encabezado como fecha real (p.ej. 01-12-2025)
+                if isinstance(raw, (datetime, date)):
+                    if raw.year == anyo and raw.month == self.mes:
+                        col_mes_idx = cell.column
+                        print(f"  Columna de mes (fecha) encontrada en {cell.coordinate}: {raw}")
+                        break
+                # Encabezado como texto
+                else:
+                    valor = str(raw).strip()
+                    valor_norm = valor.lower()
+                    # Coincidencia flexible: empieza con el texto del mes (por si hay sufijos como ' CLP')
+                    if valor_norm.startswith(encabezado_mes.lower()):
+                        col_mes_idx = cell.column
+                        print(f"  Columna de mes (texto) encontrada en {cell.coordinate}: {valor}")
+                        break
+            if col_mes_idx is not None:
+                break
+
+        if col_mes_idx is None:
+            # Si no existe la columna, crear una nueva al final de la fila de encabezados
+            print(
+                f"  No se encontró columna para el mes '{encabezado_mes}'. "
+                "Se creará una nueva columna de mes."
+            )
+            # Buscar la primera fila de encabezados no vacía
+            encabezado_row = None
+            for fila in ws.iter_rows(min_row=1, max_row=fila_encabezados_max):
+                # Considerar fila encabezado si tiene al menos una celda no vacía
+                if any(c.value not in (None, "") for c in fila):
+                    encabezado_row = fila[0].row
+                    break
+
+            if encabezado_row is None:
+                raise ValueError(
+                    "No se pudo determinar la fila de encabezados para crear la columna de mes"
+                )
+
+            # Nueva columna: después de la última columna con datos en esa fila
+            last_col = ws.max_column + 1
+            header_cell = ws.cell(row=encabezado_row, column=last_col)
+            # Usar fecha real para el encabezado; el formato lo maneja la plantilla
+            header_cell.value = datetime(anyo, self.mes, 1)
+            col_mes_idx = last_col
+            print(f"  Columna de mes creada en {header_cell.coordinate} con fecha {header_cell.value}")
+
+        # 2) Encontrar fila del concepto "TOTAL INGRESOS POR POTENCIA FIRME CLP"
+        texto_concepto = "TOTAL INGRESOS POR POTENCIA FIRME CLP"
+        fila_concepto_idx = None
+        fila_busqueda_max = ws.max_row
+
+        for row in ws.iter_rows(min_row=1, max_row=fila_busqueda_max):
+            for cell in row:
+                valor = str(cell.value).strip().upper() if cell.value is not None else ""
+                # Coincidencia flexible: que contenga el texto del concepto
+                if texto_concepto in valor:
+                    fila_concepto_idx = cell.row
+                    print(f"  Fila de concepto encontrada en {cell.coordinate}")
+                    break
+            if fila_concepto_idx is not None:
+                break
+
+        if fila_concepto_idx is None:
+            raise ValueError(
+                f"No se encontró la fila con el concepto '{texto_concepto}' en la hoja Resultado"
+            )
+
+        # 3) Escribir el total monetario en la celda correspondiente
+        celda_destino = ws.cell(row=fila_concepto_idx, column=col_mes_idx)
+        print(f"  Escribiendo valor en celda {celda_destino.coordinate}")
+        celda_destino.value = float(total_monetario)
 
     def __repr__(self):
         return f"LectorBalance(anyo={self.anyo}, mes={self.mes}, archivo={self.ruta_archivo.name})"

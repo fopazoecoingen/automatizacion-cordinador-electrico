@@ -269,6 +269,72 @@ def leer_total_ingresos_sscc(
     return float(total)
 
 
+def leer_compra_venta_energia_gm_holdings(
+    anyo: int,
+    mes: int,
+    nombre_empresa: str = "",
+    nombre_barra: str = "",
+) -> Optional[float]:
+    """
+    Lee Compra Venta Energia GM Holdings CLP desde Balance_25XXD, hoja Contratos,
+    columna Total CLP. Opcionalmente filtra por empresa/barra si existen esas columnas.
+
+    Returns:
+        Valor en CLP, None si no se encuentra
+    """
+    archivo = encontrar_archivo_balance(anyo, mes)
+    if archivo is None:
+        print(
+            f"[WARNING] No se encontró Balance para leer Compra Venta GM Holdings {mes}/{anyo}"
+        )
+        return None
+
+    try:
+        df = pd.read_excel(archivo, sheet_name="Contratos", header=0)
+    except Exception as e:
+        print(f"[WARNING] Error leyendo hoja Contratos: {e}")
+        return None
+
+    col_total = None
+    for c in df.columns:
+        c_lower = str(c).strip().lower()
+        if "total" in c_lower and "clp" in c_lower:
+            col_total = c
+            break
+    if col_total is None:
+        print(f"[WARNING] No se encontró columna Total CLP en Contratos")
+        return None
+
+    df_guardar = df.copy()
+    if nombre_empresa:
+        for c in df.columns:
+            c_lower = str(c).lower()
+            if "empresa" in c_lower or "nombre_corto" in c_lower or "nemotecnico" in c_lower:
+                df_guardar = df_guardar[
+                    df_guardar[c].astype(str).str.strip().str.upper()
+                    == nombre_empresa.strip().upper()
+                ]
+                break
+    if nombre_barra:
+        for c in df.columns:
+            if "barra" in str(c).lower():
+                df_guardar = df_guardar[
+                    df_guardar[c].astype(str).str.strip().str.upper()
+                    == nombre_barra.strip().upper()
+                ]
+                break
+
+    total = df_guardar[col_total].apply(
+        lambda v: _parsear_valor_monetario(v) or 0
+    ).sum()
+
+    print(
+        f"[INFO] Leyendo Compra Venta Energia GM Holdings CLP desde: {archivo.name} (hoja Contratos)"
+    )
+    print(f"  -> Dato obtenido (Total CLP): {total:,.2f}")
+    return float(total)
+
+
 def leer_valor_concepto_anexo_xlsb(
     ruta_anexo: Path,
     texto_concepto: str,

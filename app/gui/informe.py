@@ -12,6 +12,7 @@ from core.descargar_archivos import (
 )
 from core.leer_excel import (
     LectorBalance,
+    leer_compra_venta_energia_gm_holdings,
     leer_total_ingresos_potencia_firme,
     leer_total_ingresos_sscc,
 )
@@ -903,6 +904,21 @@ class InterfazInforme:
                         total_sscc,
                         texto_concepto="TOTAL INGRESOS POR SSCC CLP",
                     )
+
+            # Compra Venta Energia GM Holdings CLP: Balance, hoja Contratos, columna VENTA[CLP]
+            total_gm_holdings = leer_compra_venta_energia_gm_holdings(
+                anyo, mes,
+                nombre_empresa=nombre_empresa,
+                nombre_barra=nombre_barra,
+            )
+            if total_gm_holdings is not None:
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    total_gm_holdings,
+                    texto_concepto="Compra Venta Energia GM Holdings CLP",
+                )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
             if columna_fisico_kwh is not None:

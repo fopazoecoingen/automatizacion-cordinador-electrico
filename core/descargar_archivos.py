@@ -20,6 +20,30 @@ meses = {
     12: "Diciembre",
 }
 
+# Mes abreviado para patrones de URL (ej: dic, ene, feb)
+meses_abrev = {
+    1: "ene",
+    2: "feb",
+    3: "mar",
+    4: "abr",
+    5: "may",
+    6: "jun",
+    7: "jul",
+    8: "ago",
+    9: "sep",
+    10: "oct",
+    11: "nov",
+    12: "dic",
+}
+
+# Tipos de archivo PLABACOM (clave interna, descripción)
+TIPOS_ARCHIVO = {
+    "energia_resultados": "01 Resultados (Energía)",
+    "energia_antecedentes": "02 Antecedentes de Cálculo",
+    "sscc": "Balance SSCC",
+    "potencia": "Balance Psuf (Potencia)",
+}
+
 
 def construir_url(anyo, mes, version="01", tipo="Resultados"):
     """
@@ -60,6 +84,59 @@ def construir_url(anyo, mes, version="01", tipo="Resultados"):
     )
 
     return url_completa, nombre_local
+
+
+def construir_url_tipo(anyo, mes, tipo):
+    """
+    Construye la URL del archivo ZIP según el año, mes y tipo de archivo.
+
+    Tipos soportados:
+        - energia_resultados: 01 Resultados (existente)
+        - energia_antecedentes: 02 Antecedentes de Cálculo
+        - sscc: Balance_SSCC
+        - potencia: Balance_Psuf
+
+    Args:
+        anyo: Año del archivo
+        mes: Mes del archivo (1-12)
+        tipo: Una de las claves en TIPOS_ARCHIVO
+
+    Returns:
+        tuple: (url_completa, nombre_archivo_local)
+    """
+    mes_str = str(mes).zfill(2)
+    nombre_mes = meses[mes]
+    anyo_abrev = str(anyo)[-2:]
+    mes_abrev = meses_abrev[mes]
+
+    base_s3 = f"PLABACOM/{anyo}/{mes_str}_{nombre_mes}"
+    url_base = "https://cen-plabacom.s3.amazonaws.com/"
+
+    if tipo == "energia_resultados":
+        nombre_archivo = f"01 Resultados_{anyo_abrev}{mes_str}_BD01.zip"
+        ruta_s3 = f"{base_s3}/Energia/Definitivo/v_1/{quote(nombre_archivo, safe='')}"
+        nombre_local = f"PLABACOM_{anyo}_{mes}_{nombre_mes}_Energia_Definitivo_v_1_{nombre_archivo}"
+        return url_base + ruta_s3, nombre_local
+
+    if tipo == "energia_antecedentes":
+        nombre_archivo = f"02 Antecedentes de Cálculo_{anyo_abrev}{mes_str}_BD01.zip"
+        ruta_s3 = f"{base_s3}/Energia/Definitivo/v_1/{quote(nombre_archivo, safe='')}"
+        nombre_local = f"PLABACOM_{anyo}_{mes}_{nombre_mes}_Energia_Antecedentes_{anyo_abrev}{mes_str}_BD01.zip"
+        return url_base + ruta_s3, nombre_local
+
+    if tipo == "sscc":
+        nombre_archivo = f"Balance_SSCC_{anyo}_{mes_abrev}_def.zip"
+        ruta_s3 = f"{base_s3}/SSCC/Definitivo/v_1/{quote(nombre_archivo, safe='')}"
+        nombre_local = f"PLABACOM_{anyo}_{mes}_{nombre_mes}_SSCC_{nombre_archivo}"
+        return url_base + ruta_s3, nombre_local
+
+    if tipo == "potencia":
+        nombre_archivo = f"Balance_Psuf_{anyo_abrev}{mes_str}_def.zip"
+        ruta_s3 = f"{base_s3}/Potencia/Definitivo/v_1/{quote(nombre_archivo, safe='')}"
+        nombre_local = f"PLABACOM_{anyo}_{mes}_{nombre_mes}_Potencia_{nombre_archivo}"
+        return url_base + ruta_s3, nombre_local
+
+    raise ValueError(f"Tipo de archivo no soportado: {tipo}")
 
 
 def descargar_archivo(url, ruta_destino, mostrar_progreso=True):
@@ -122,16 +199,43 @@ def buscar_archivo_existente(anyo, mes, carpeta_zip="bd_data"):
     Returns:
         Path: Ruta del archivo encontrado, None si no existe
     """
+    return buscar_archivo_existente_tipo(anyo, mes, "energia_resultados", carpeta_zip)
+
+
+def buscar_archivo_existente_tipo(anyo, mes, tipo, carpeta_zip="bd_data"):
+    """
+    Busca si existe un archivo ZIP para el año, mes y tipo especificados.
+
+    Args:
+        anyo: Año del archivo
+        mes: Mes del archivo (1-12)
+        tipo: Una de las claves en TIPOS_ARCHIVO
+        carpeta_zip: Carpeta donde buscar
+
+    Returns:
+        Path: Ruta del archivo encontrado, None si no existe
+    """
     carpeta = Path(carpeta_zip)
     if not carpeta.exists():
         return None
 
-    # Patrón base para buscar: PLABACOM_AÑO_MES_NombreMes_Energia_Definitivo
-    patron_base = f"PLABACOM_{anyo}_{mes}_{meses[mes]}_Energia_Definitivo"
+    # Patrón base: PLABACOM_AÑO_MES_NombreMes
+    patron_base = f"PLABACOM_{anyo}_{mes}_{meses[mes]}"
 
-    # Buscar archivos que coincidan con el patrón
+    # Filtros por tipo
+    if tipo == "energia_resultados":
+        patron_extra = "Energia_Definitivo"
+    elif tipo == "energia_antecedentes":
+        patron_extra = "Antecedentes"
+    elif tipo == "sscc":
+        patron_extra = "SSCC"
+    elif tipo == "potencia":
+        patron_extra = "Potencia"
+    else:
+        return None
+
     for archivo in carpeta.glob("*.zip"):
-        if patron_base in archivo.name:
+        if patron_base in archivo.name and patron_extra in archivo.name:
             return archivo
 
     return None
@@ -316,6 +420,99 @@ def descargar_zip_si_no_existe(anyo, mes, carpeta_zip="bd_data"):
         else:
             print(f"✗ Error en la descarga: {mensaje}")
         return None, codigo_error
+
+
+def descargar_zip_tipo_si_no_existe(anyo, mes, tipo, carpeta_zip="bd_data", mostrar_progreso=True):
+    """
+    Descarga el archivo ZIP del tipo indicado si no existe en la carpeta.
+
+    Args:
+        anyo: Año del archivo a descargar
+        mes: Mes del archivo a descargar (1-12)
+        tipo: Una de las claves en TIPOS_ARCHIVO
+        carpeta_zip: Carpeta donde guardar los ZIPs
+        mostrar_progreso: Si mostrar barra de progreso en la descarga
+
+    Returns:
+        tuple: (ruta: str o None, codigo_error: int o None)
+    """
+    carpeta = Path(carpeta_zip)
+    carpeta.mkdir(exist_ok=True)
+
+    archivo_existente = buscar_archivo_existente_tipo(anyo, mes, tipo, carpeta_zip)
+
+    if archivo_existente:
+        tamaño = archivo_existente.stat().st_size / (1024 * 1024)  # MB
+        print(f"✓ El archivo ya existe ({TIPOS_ARCHIVO.get(tipo, tipo)}): {archivo_existente.name}")
+        print(f"  Tamaño: {tamaño:.2f} MB")
+        return str(archivo_existente), None
+
+    url, nombre_archivo = construir_url_tipo(anyo, mes, tipo)
+    ruta_archivo = carpeta / nombre_archivo
+
+    if ruta_archivo.exists():
+        tamaño = ruta_archivo.stat().st_size / (1024 * 1024)
+        print(f"✓ El archivo ya existe: {ruta_archivo}")
+        print(f"  Tamaño: {tamaño:.2f} MB")
+        return str(ruta_archivo), None
+
+    print(f"Descargando {TIPOS_ARCHIVO.get(tipo, tipo)}: {nombre_archivo}")
+    exito, codigo_error, mensaje = descargar_archivo(url, ruta_archivo, mostrar_progreso=mostrar_progreso)
+
+    if exito:
+        tamaño = ruta_archivo.stat().st_size / (1024 * 1024)
+        print(f"✓ Descarga completada: {ruta_archivo}")
+        print(f"  Tamaño: {tamaño:.2f} MB")
+        return str(ruta_archivo), None
+    else:
+        if codigo_error == 403:
+            print(f"✗ Error 403: El contenido no está disponible para este año/mes")
+        else:
+            print(f"✗ Error en la descarga: {mensaje}")
+        return None, codigo_error
+
+
+def descargar_y_descomprimir_zip_tipo(
+    anyo,
+    mes,
+    tipo,
+    carpeta_zip="bd_data",
+    carpeta_descomprimidos=None,
+    descomprimir=True,
+    mostrar_progreso=True,
+):
+    """
+    Descarga el archivo ZIP del tipo indicado si no existe y opcionalmente lo descomprime.
+
+    Args:
+        anyo: Año del archivo
+        mes: Mes del archivo (1-12)
+        tipo: Una de las claves en TIPOS_ARCHIVO
+        carpeta_zip: Carpeta donde guardar los ZIPs
+        carpeta_descomprimidos: Carpeta donde descomprimir (si None, usa carpeta_zip/descomprimidos)
+        descomprimir: Si descomprimir automáticamente después de descargar
+        mostrar_progreso: Si mostrar barras de progreso
+
+    Returns:
+        tuple: (ruta_zip: str o None, ruta_descomprimida: str o None, codigo_error: int o None)
+    """
+    ruta_zip, codigo_error = descargar_zip_tipo_si_no_existe(
+        anyo, mes, tipo, carpeta_zip, mostrar_progreso=mostrar_progreso
+    )
+
+    if not ruta_zip:
+        return None, None, codigo_error
+
+    ruta_descomprimida = None
+    if descomprimir:
+        if carpeta_descomprimidos is None:
+            carpeta_descomprimidos = Path(carpeta_zip) / "descomprimidos"
+
+        ruta_descomprimida = descomprimir_zip(
+            ruta_zip, carpeta_descomprimidos, None, mostrar_progreso=mostrar_progreso
+        )
+
+    return ruta_zip, ruta_descomprimida, None
 
 
 if __name__ == "__main__":

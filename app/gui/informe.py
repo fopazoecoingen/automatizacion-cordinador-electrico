@@ -5,9 +5,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from core.descargar_archivos import (
-    buscar_archivo_existente,
-    descargar_y_descomprimir_zip,
+    buscar_archivo_existente_tipo,
+    descargar_y_descomprimir_zip_tipo,
     meses,
+    TIPOS_ARCHIVO,
 )
 from core.leer_excel import LectorBalance
 from core.plantilla_cliente import escribir_total_en_resultado
@@ -467,6 +468,9 @@ class InterfazInforme:
             messagebox.showerror("Error", "Por favor seleccione una ruta de destino para el informe.")
             return
 
+        # Tipos a descargar automáticamente por mes (Resultados, SSCC, Potencia — sin Antecedentes)
+        tipos_a_descargar = ["energia_resultados", "sscc", "potencia"]
+
         nombre_barra = self.entries["Barra"].get().strip()
         nombre_empresa = self.entries["Empresa"].get().strip()
 
@@ -487,6 +491,7 @@ class InterfazInforme:
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
+                tipos_a_descargar,
             ),
             daemon=True,
         )
@@ -502,6 +507,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
+        tipos_seleccionados: list,
     ) -> None:
         """Procesar el informe en un hilo separado para un rango de fechas."""
         try:
@@ -544,6 +550,7 @@ class InterfazInforme:
                     ruta_destino,
                     nombre_barra,
                     nombre_empresa,
+                    tipos_seleccionados,
                     idx + 1,
                     total_meses,
                 )
@@ -595,6 +602,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
+        tipos_seleccionados: list,
         mes_actual: int,
         total_meses: int,
     ) -> None:
@@ -642,63 +650,55 @@ class InterfazInforme:
                         ),
                     )
 
-            # Paso 1: Verificar si el archivo ya existe
-            self.root.after(0, lambda: self.progress_var.set(calcular_progreso(5)))
-            self.root.after(
-                0,
-                lambda: self.progress_text_label.config(
-                    text=f"[{mes_actual}/{total_meses}] Verificando archivo para {nombre_mes} {anyo}..."
-                ),
-            )
+            # Paso 1 y 2: Descargar/descomprimir cada tipo seleccionado (mismo proceso que ya existía)
+            ruta_zip_energia = None  # Necesario para el informe
+            codigo_error_energia = None
+            total_tipos = len(tipos_seleccionados)
 
-            archivo_existente = buscar_archivo_existente(anyo, mes)
-
-            if archivo_existente:
-                tamaño_mb = archivo_existente.stat().st_size / (1024 * 1024)
+            for idx_tipo, tipo in enumerate(tipos_seleccionados):
+                prog = calcular_progreso(5 + int(25 * idx_tipo / total_tipos))
+                desc = TIPOS_ARCHIVO.get(tipo, tipo)
+                self.root.after(0, lambda p=prog: self.progress_var.set(p))
                 self.root.after(
                     0,
-                    lambda: self.progress_text_label.config(
-                        text=(
-                            f"[{mes_actual}/{total_meses}] ✓ Archivo encontrado: "
-                            f"{archivo_existente.name} ({tamaño_mb:.2f} MB)"
-                        )
+                    lambda d=desc, ma=mes_actual, tm=total_meses, nm=nombre_mes, a=anyo: self.progress_text_label.config(
+                        text=f"[{ma}/{tm}] Descargando {d} para {nm} {a}..."
                     ),
                 )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(15)))
-            else:
-                self.root.after(
-                    0,
-                    lambda: self.progress_text_label.config(
-                        text=(
-                            f"[{mes_actual}/{total_meses}] Archivo no encontrado. "
-                            f"Iniciando descarga..."
-                        )
-                    ),
-                )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(10)))
 
-            # Paso 2: Descargar/descomprimir archivo
-            self.root.after(
-                0,
-                lambda: self.progress_text_label.config(
-                    text=(
-                        f"[{mes_actual}/{total_meses}] Descargando y descomprimiendo "
-                        f"para {nombre_mes} {anyo}..."
+                archivo_existente = buscar_archivo_existente_tipo(anyo, mes, tipo)
+                if archivo_existente:
+                    self.root.after(
+                        0,
+                        lambda ma=mes_actual, tm=total_meses, ae=archivo_existente: self.progress_text_label.config(
+                            text=f"[{ma}/{tm}] ✓ {ae.name} (ya existe)"
+                        ),
                     )
-                ),
-            )
 
-            ruta_zip, ruta_descomprimida, codigo_error = descargar_y_descomprimir_zip(anyo, mes)
+                ruta_zip, ruta_descomprimida, codigo_error = descargar_y_descomprimir_zip_tipo(
+                    anyo, mes, tipo, descomprimir=True, mostrar_progreso=False
+                )
 
-            if not ruta_zip:
-                if codigo_error == 403:
+                if tipo == "energia_resultados":
+                    ruta_zip_energia = ruta_zip
+                    codigo_error_energia = codigo_error
+
+                if ruta_zip:
+                    self.root.after(
+                        0,
+                        lambda ma=mes_actual, tm=total_meses, rz=ruta_zip, d=desc: self.progress_text_label.config(
+                            text=f"[{ma}/{tm}] ✓ {d}: {Path(rz).name}"
+                        ),
+                    )
+
+            # Si energia_resultados falló, no podemos generar el informe para este mes
+            if not ruta_zip_energia:
+                ma, tm, nm, a = mes_actual, total_meses, nombre_mes, anyo
+                if codigo_error_energia == 403:
                     self.root.after(
                         0,
                         lambda: self.progress_text_label.config(
-                            text=(
-                                f"[{mes_actual}/{total_meses}] ✗ Error 403: "
-                                f"Contenido no disponible para {nombre_mes} {anyo}"
-                            )
+                            text=f"[{ma}/{tm}] ✗ Error 403: Contenido no disponible para {nm} {a}"
                         ),
                     )
                     print(
@@ -710,10 +710,7 @@ class InterfazInforme:
                     self.root.after(
                         0,
                         lambda: self.progress_text_label.config(
-                            text=(
-                                f"[{mes_actual}/{total_meses}] ✗ Error al descargar "
-                                f"para {nombre_mes} {anyo}"
-                            )
+                            text=f"[{ma}/{tm}] ✗ Error al descargar para {nm} {a}"
                         ),
                     )
                     print(
@@ -721,32 +718,6 @@ class InterfazInforme:
                         "continuando con siguiente mes..."
                     )
                     return  # Continuar con el siguiente mes
-
-            # Mostrar información del archivo descargado
-            if ruta_zip:
-                tamaño_zip = Path(ruta_zip).stat().st_size / (1024 * 1024)
-                self.root.after(
-                    0,
-                    lambda: self.progress_text_label.config(
-                        text=(
-                            f"[{mes_actual}/{total_meses}] ✓ ZIP disponible: "
-                            f"{Path(ruta_zip).name} ({tamaño_zip:.2f} MB)"
-                        )
-                    ),
-                )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(25)))
-
-            if ruta_descomprimida:
-                self.root.after(
-                    0,
-                    lambda: self.progress_text_label.config(
-                        text=(
-                            f"[{mes_actual}/{total_meses}] ✓ Descomprimido: "
-                            f"{Path(ruta_descomprimida).name}"
-                        )
-                    ),
-                )
-                self.root.after(0, lambda: self.progress_var.set(calcular_progreso(30)))
 
             # Paso 3: Buscar archivo Balance
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(35)))

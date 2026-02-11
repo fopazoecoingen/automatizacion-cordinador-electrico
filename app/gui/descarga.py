@@ -5,9 +5,10 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from core.descargar_archivos import (
-    buscar_archivo_existente,
-    descargar_y_descomprimir_zip,
+    buscar_archivo_existente_tipo,
+    descargar_y_descomprimir_zip_tipo,
     meses,
+    TIPOS_ARCHIVO,
 )
 
 
@@ -15,7 +16,7 @@ class InterfazDescarga:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Descarga de Archivos PLABACOM")
-        self.root.geometry("500x500")
+        self.root.geometry("520x580")
         self.root.configure(bg="#E5E5E5")
 
         # Variables
@@ -23,6 +24,14 @@ class InterfazDescarga:
         self.mes_var = tk.IntVar(value=datetime.now().month)
         self.mes_combo = None  # Se asignará en create_widgets
         self.descargando = False
+
+        # Variables para tipos de archivo (por defecto solo Resultados)
+        self.tipo_vars = {
+            "energia_resultados": tk.BooleanVar(value=True),
+            "energia_antecedentes": tk.BooleanVar(value=False),
+            "sscc": tk.BooleanVar(value=False),
+            "potencia": tk.BooleanVar(value=False),
+        }
 
         # Crear interfaz
         self.create_widgets()
@@ -93,6 +102,35 @@ class InterfazDescarga:
             "<<ComboboxSelected>>", lambda e: self.verificar_archivo_existente()
         )
 
+        # Frame para tipos de archivo
+        tipos_frame = tk.Frame(main_frame, bg="white")
+        tipos_frame.pack(pady=(10, 15), padx=30, fill=tk.X)
+
+        tipos_label = tk.Label(
+            tipos_frame,
+            text="Tipos de archivo a descargar:",
+            font=("Arial", 11),
+            bg="white",
+            anchor="w",
+        )
+        tipos_label.grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.tipo_checkboxes = {}
+        for i, (tipo_key, descripcion) in enumerate(TIPOS_ARCHIVO.items()):
+            cb = tk.Checkbutton(
+                tipos_frame,
+                text=descripcion,
+                variable=self.tipo_vars[tipo_key],
+                font=("Arial", 10),
+                bg="white",
+                activebackground="white",
+                anchor="w",
+                command=self.verificar_archivo_existente,
+            )
+            row, col = (i // 2) + 1, (i % 2)
+            cb.grid(row=row, column=col, sticky="w", padx=(0, 25), pady=2)
+            self.tipo_checkboxes[tipo_key] = cb
+
         # Frame para información
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(pady=20, padx=30, fill=tk.X)
@@ -160,8 +198,12 @@ class InterfazDescarga:
         # Verificar archivo existente al iniciar
         self.verificar_archivo_existente()
 
+    def _obtener_tipos_seleccionados(self):
+        """Retorna la lista de tipos de archivo que el usuario tiene marcados."""
+        return [k for k, v in self.tipo_vars.items() if v.get()]
+
     def verificar_archivo_existente(self) -> None:
-        """Verifica si el archivo ya existe y actualiza la información."""
+        """Verifica si los archivos ya existen y actualiza la información."""
         try:
             anyo = self.anyo_var.get()
             valor_mes = self.mes_combo.get()
@@ -174,30 +216,36 @@ class InterfazDescarga:
 
             mes = int(valor_mes.split(" - ")[0])
             nombre_mes = meses[mes]
+            tipos_seleccionados = self._obtener_tipos_seleccionados()
 
-            # Buscar si el archivo ya existe
-            archivo_existente = buscar_archivo_existente(anyo, mes)
-
-            if archivo_existente:
-                tamaño = archivo_existente.stat().st_size / (1024 * 1024)  # Tamaño en MB
+            if not tipos_seleccionados:
                 self.info_label.config(
                     text=(
-                        f"✓ Archivo ya existe: {nombre_mes} {anyo}\n"
-                        f"Tamaño: {tamaño:.2f} MB\n"
-                        f"Ubicación: {archivo_existente.name}"
-                    ),
-                    fg="#28a745",  # Verde
-                )
-            else:
-                self.info_label.config(
-                    text=(
-                        f"Archivo no encontrado: {nombre_mes} {anyo}\n"
-                        "Se descargará al hacer clic en 'Descargar Archivo'"
+                        f"Estado para {nombre_mes} {anyo}\n"
+                        "Marque al menos un tipo de archivo a descargar"
                     ),
                     fg="#666666",
                 )
+                return
+
+            # Verificar estado por cada tipo seleccionado
+            lineas = [f"Estado para {nombre_mes} {anyo}:"]
+            todos_existen = True
+            for tipo in tipos_seleccionados:
+                archivo = buscar_archivo_existente_tipo(anyo, mes, tipo)
+                desc = TIPOS_ARCHIVO.get(tipo, tipo)
+                if archivo:
+                    tamaño = archivo.stat().st_size / (1024 * 1024)
+                    lineas.append(f"  ✓ {desc}: {tamaño:.2f} MB")
+                else:
+                    lineas.append(f"  ✗ {desc}: no encontrado")
+                    todos_existen = False
+
+            self.info_label.config(
+                text="\n".join(lineas),
+                fg="#28a745" if todos_existen else "#666666",
+            )
         except Exception:
-            # Si hay algún error, simplemente no actualizar
             pass
 
     def iniciar_descarga(self) -> None:
@@ -228,23 +276,15 @@ class InterfazDescarga:
             messagebox.showerror("Error", "Por favor seleccione un mes válido.")
             return
 
-        # Verificar si el archivo ya existe antes de descargar
-        archivo_existente = buscar_archivo_existente(anyo, mes)
-        nombre_mes = meses[mes]
-
-        if archivo_existente:
-            tamaño = archivo_existente.stat().st_size / (1024 * 1024)  # Tamaño en MB
-            respuesta = messagebox.askyesno(
-                "Archivo ya existe",
-                (
-                    f"El archivo para {nombre_mes} {anyo} ya existe:\n\n"
-                    f"Archivo: {archivo_existente.name}\n"
-                    f"Tamaño: {tamaño:.2f} MB\n\n"
-                    "¿Desea descargarlo de nuevo?"
-                ),
+        tipos_seleccionados = self._obtener_tipos_seleccionados()
+        if not tipos_seleccionados:
+            messagebox.showerror(
+                "Error",
+                "Seleccione al menos un tipo de archivo a descargar.",
             )
-            if not respuesta:
-                return  # El usuario canceló
+            return
+
+        nombre_mes = meses[mes]
 
         # Actualizar interfaz
         self.descargando = True
@@ -253,13 +293,10 @@ class InterfazDescarga:
         self.progress_label.config(text="Iniciando descarga...")
         self.info_label.config(text=f"Descargando: {nombre_mes} {anyo}", fg="#666666")
 
-        # Guardar si el archivo existía antes (para mostrar mensaje apropiado después)
-        archivo_existia_antes = archivo_existente is not None
-
         # Iniciar descarga en hilo separado
         thread = threading.Thread(
             target=self.descargar_archivo_thread,
-            args=(anyo, mes, archivo_existia_antes),
+            args=(anyo, mes, tipos_seleccionados),
             daemon=True,
         )
         thread.start()
@@ -268,25 +305,35 @@ class InterfazDescarga:
         self,
         anyo: int,
         mes: int,
-        archivo_existia_antes: bool,
+        tipos_seleccionados: list,
     ) -> None:
-        """Descargar archivo en hilo separado."""
+        """Descargar archivos en hilo separado para cada tipo seleccionado."""
         try:
-            # Actualizar progreso inicial
-            self.root.after(0, lambda: self.progress_var.set(10))
-            self.root.after(
-                0,
-                lambda: self.progress_label.config(
-                    text="Verificando si el archivo existe..."
-                ),
-            )
+            nombre_mes = meses[mes]
+            total_tipos = len(tipos_seleccionados)
+            resultados = []  # (tipo, ruta_zip, ruta_des, codigo_error)
 
-            # Descargar y descomprimir (la función ya verifica si existe)
-            ruta_zip, ruta_descomprimida, codigo_error = descargar_y_descomprimir_zip(
-                anyo, mes, descomprimir=True
-            )
+            for idx, tipo in enumerate(tipos_seleccionados):
+                progreso = int(10 + (idx / total_tipos) * 85)
+                desc = TIPOS_ARCHIVO.get(tipo, tipo)
+                self.root.after(0, lambda p=progreso: self.progress_var.set(p))
+                self.root.after(
+                    0,
+                    lambda d=desc: self.progress_label.config(
+                        text=f"Descargando {d}..."
+                    ),
+                )
 
-            if ruta_zip:
+                ruta_zip, ruta_des, codigo_error = descargar_y_descomprimir_zip_tipo(
+                    anyo, mes, tipo, descomprimir=True, mostrar_progreso=False
+                )
+                resultados.append((tipo, ruta_zip, ruta_des, codigo_error))
+
+            # Resumen de resultados
+            exitosos = [(t, z, d, e) for t, z, d, e in resultados if z]
+            fallidos = [(t, e) for t, z, d, e in resultados if not z]
+
+            if exitosos:
                 # Actualizar progreso
                 self.root.after(0, lambda: self.progress_var.set(100))
                 self.root.after(
@@ -296,80 +343,49 @@ class InterfazDescarga:
                     ),
                 )
 
-                # Actualizar información
-                tamaño_zip = Path(ruta_zip).stat().st_size / (1024 * 1024)
-                nombre_mes = meses[mes]
-
-                mensaje_info = f"✓ Archivo disponible: {nombre_mes} {anyo}\n"
-                mensaje_info += (
-                    f"ZIP: {tamaño_zip:.2f} MB - {Path(ruta_zip).name}\n"
-                )
-
-                if ruta_descomprimida:
-                    # Calcular tamaño de la carpeta descomprimida
-                    tamaño_descomprimido = (
-                        sum(
-                            f.stat().st_size
-                            for f in Path(ruta_descomprimida).rglob("*")
-                            if f.is_file()
-                        )
-                        / (1024 * 1024)
-                    )
-                    mensaje_info += (
-                        f"Descomprimido: {tamaño_descomprimido:.2f} MB - "
-                        f"{Path(ruta_descomprimida).name}"
-                    )
-                else:
-                    mensaje_info += "Descompresión: No disponible"
+                # Construir mensaje con todos los archivos descargados
+                lineas_info = [f"✓ Archivos disponibles: {nombre_mes} {anyo}"]
+                lineas_final = []
+                for t, ruta_zip, ruta_des, _ in exitosos:
+                    desc = TIPOS_ARCHIVO.get(t, t)
+                    tamaño_zip = Path(ruta_zip).stat().st_size / (1024 * 1024)
+                    lineas_info.append(f"  ✓ {desc}: {tamaño_zip:.2f} MB")
+                    lineas_final.append(f"{desc}: {Path(ruta_zip).name}")
+                    if ruta_des:
+                        lineas_final.append(f"  Descomprimido: {Path(ruta_des).name}")
 
                 self.root.after(
                     0,
-                    lambda: self.info_label.config(
-                        text=mensaje_info,
+                    lambda li=lineas_info: self.info_label.config(
+                        text="\n".join(li),
                         fg="#28a745",
                     ),
                 )
 
-                # Mostrar mensaje apropiado
-                if archivo_existia_antes:
-                    mensaje_final = (
-                        "El archivo ya estaba disponible:\n\n"
-                        f"ZIP: {ruta_zip}"
-                    )
-                else:
-                    mensaje_final = (
-                        "El archivo se ha descargado correctamente:\n\n"
-                        f"ZIP: {ruta_zip}"
-                    )
+                titulo = "Descarga exitosa" if len(exitosos) == total_tipos else "Descarga parcial"
+                mensaje_final = "Archivos descargados correctamente:\n\n" + "\n".join(lineas_final)
+                if fallidos:
+                    mensaje_final += "\n\nNo se pudieron descargar:\n"
+                    for t, e in fallidos:
+                        desc = TIPOS_ARCHIVO.get(t, t)
+                        mensaje_final += f"  • {desc}"
+                        if e == 403:
+                            mensaje_final += " (no disponible en servidor)"
+                        mensaje_final += "\n"
 
-                if ruta_descomprimida:
-                    mensaje_final += f"\n\nDescomprimido en:\n{ruta_descomprimida}"
-
-                if archivo_existia_antes:
-                    self.root.after(
-                        0,
-                        lambda: messagebox.showinfo(
-                            "Archivo encontrado",
-                            mensaje_final,
-                        ),
-                    )
-                else:
-                    self.root.after(
-                        0,
-                        lambda: messagebox.showinfo(
-                            "Descarga exitosa",
-                            mensaje_final,
-                        ),
-                    )
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(titulo, mensaje_final),
+                )
 
                 # Actualizar la verificación para reflejar el estado actual
                 self.root.after(0, self.verificar_archivo_existente)
             else:
-                # Verificar si fue error 403
-                nombre_mes = meses[mes]
+                # Todos fallaron
                 self.root.after(0, lambda: self.progress_var.set(0))
+                hay_403 = any(e == 403 for _, e in fallidos)
 
-                if codigo_error == 403:
+                if hay_403:
                     # Error 403: Contenido no disponible
                     self.root.after(
                         0,

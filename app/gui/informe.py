@@ -787,9 +787,9 @@ class InterfazInforme:
                 elif "fisico" in col_lower and "kwh" in col_lower:
                     columna_fisico_kwh = col
 
-            # monetario solo se usa como fallback si no hay Anexo Potencia
+            # monetario: necesario para TOTAL INGRESOS POR ENERGIA CLP y fallback de POTENCIA FIRME
             if columna_monetario is None:
-                print("[WARNING] No se encontró la columna 'monetario' en el DataFrame")
+                print("[WARNING] No se encontró la columna 'monetario' en Balance Valorizado")
 
             if nombre_barra or nombre_empresa:
                 df_guardar = df_balance.copy()
@@ -869,6 +869,23 @@ class InterfazInforme:
                 total_monetario,
                 texto_concepto="TOTAL INGRESOS POR POTENCIA FIRME CLP",
             )
+
+            # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
+            if columna_monetario is not None:
+                total_energia = (
+                    df_guardar[columna_monetario].dropna().astype(float).sum()
+                )
+                print(
+                    f"[INFO] TOTAL INGRESOS POR ENERGIA CLP para {nombre_mes} {anyo}: "
+                    f"{total_energia:,.2f} (Balance Valorizado, col monetario)"
+                )
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    total_energia,
+                    texto_concepto="TOTAL INGRESOS POR ENERGIA CLP",
+                )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
             if columna_fisico_kwh is not None:

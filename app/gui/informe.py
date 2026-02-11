@@ -10,7 +10,7 @@ from core.descargar_archivos import (
     meses,
     TIPOS_ARCHIVO,
 )
-from core.leer_excel import LectorBalance
+from core.leer_excel import LectorBalance, leer_total_ingresos_potencia_firme
 from core.plantilla_cliente import escribir_total_en_resultado
 
 
@@ -787,9 +787,9 @@ class InterfazInforme:
                 elif "fisico" in col_lower and "kwh" in col_lower:
                     columna_fisico_kwh = col
 
+            # monetario solo se usa como fallback si no hay Anexo Potencia
             if columna_monetario is None:
-                print("[ERROR] No se encontró la columna 'monetario' en el DataFrame")
-                return
+                print("[WARNING] No se encontró la columna 'monetario' en el DataFrame")
 
             if nombre_barra or nombre_empresa:
                 df_guardar = df_balance.copy()
@@ -841,14 +841,25 @@ class InterfazInforme:
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
 
-            # Calcular total monetario
-            total_monetario = (
-                df_guardar[columna_monetario].dropna().astype(float).sum()
+            # TOTAL INGRESOS POR POTENCIA FIRME CLP: leer desde Anexo 02.b Potencia
+            # Tabla Datos: Empresa (B) | Potencia SEN (C) | TOTAL (D)
+            total_monetario = leer_total_ingresos_potencia_firme(
+                anyo, mes, nombre_empresa=nombre_empresa
             )
-            print(
-                f"[INFO] Total monetario para {nombre_mes} {anyo}: "
-                f"{total_monetario:,.2f}"
-            )
+            if total_monetario is None:
+                # Fallback: usar suma monetario del Balance Valorizado
+                if columna_monetario is None:
+                    print("[ERROR] No se encontró Anexo Potencia ni columna 'monetario' en Balance")
+                    return
+                total_monetario = (
+                    df_guardar[columna_monetario].dropna().astype(float).sum()
+                )
+                print(
+                    f"[INFO] Anexo Potencia no encontrado. Usando Balance Valorizado: "
+                    f"{total_monetario:,.2f}"
+                )
+            else:
+                print(f"[INFO] TOTAL INGRESOS POR POTENCIA FIRME CLP: {total_monetario:,.2f}")
 
             # Escribir TOTAL INGRESOS POR POTENCIA FIRME CLP en plantilla
             escribir_total_en_resultado(

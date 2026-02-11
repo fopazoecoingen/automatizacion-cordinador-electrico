@@ -106,6 +106,319 @@ def encontrar_archivo_balance(anyo: int, mes: int, carpeta_base: str = "bd_data"
     return None
 
 
+# Mes abreviado para nombre del Anexo Potencia (Ene, Feb, ... Dic)
+MESES_ANEXO_POTENCIA = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
+
+
+def encontrar_archivo_anexo_potencia(
+    anyo: int,
+    mes: int,
+    carpeta_base: str = "bd_data",
+) -> Optional[Path]:
+    """
+    Encuentra el archivo Anexo 02.b Cuadros de Pago_Potencia_SEN_{Mes}{Year}_Simplificado
+    en la carpeta descomprimida del ZIP de Potencia.
+
+    Args:
+        anyo: Año del archivo
+        mes: Mes del archivo (1-12)
+        carpeta_base: Carpeta base (por defecto "bd_data")
+
+    Returns:
+        Path del archivo encontrado, None si no existe
+    """
+    anyo = int(anyo)
+    mes = int(mes)
+    if mes < 1 or mes > 12:
+        return None
+
+    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
+    year2 = str(anyo)[-2:]
+    # Buscar .xlsb y .xlsx
+    nombres_posibles = [
+        f"Anexo 02.b Cuadros de Pago_Potencia_SEN_{mes_anexo}{year2}_Simplificado.xlsb",
+        f"Anexo 02.b Cuadros de Pago_Potencia_SEN_{mes_anexo}{year2}_Simplificado.xlsx",
+    ]
+
+    carpeta_descomprimidos = Path(carpeta_base) / "descomprimidos"
+    if not carpeta_descomprimidos.exists():
+        return None
+
+    # Buscar en carpetas que contengan "Potencia"
+    for carpeta in carpeta_descomprimidos.iterdir():
+        if carpeta.is_dir() and "Potencia" in carpeta.name:
+            for nombre in nombres_posibles:
+                archivo = carpeta / nombre
+                if archivo.exists():
+                    return archivo
+            # Buscar también en subcarpetas
+            for archivo in carpeta.rglob("Anexo 02.b*Potencia*Simplificado*"):
+                if archivo.suffix.lower() in (".xlsb", ".xlsx"):
+                    return archivo
+
+    return None
+
+
+def leer_valor_concepto_anexo_xlsb(
+    ruta_anexo: Path,
+    texto_concepto: str,
+    nombre_hoja: Optional[str] = None,
+) -> Optional[float]:
+    """
+    Busca 'texto_concepto' en el Anexo y devuelve el valor numérico asociado.
+    El valor suele estar en la misma fila, columna adyacente a la derecha.
+
+    Args:
+        ruta_anexo: Ruta del archivo .xlsb o .xlsx
+        texto_concepto: Texto a buscar (ej: "TOTAL INGRESOS POR POTENCIA FIRME CLP")
+        nombre_hoja: Nombre de la hoja donde buscar (ej: "01.BALANCE POTENCIA Dic-25 def").
+            Si None, busca en todas las hojas.
+
+    Returns:
+        Valor numérico encontrado, None si no se encuentra
+    """
+    ruta = Path(ruta_anexo)
+    if not ruta.exists():
+        return None
+
+    texto_upper = texto_concepto.upper()
+
+    if ruta.suffix.lower() == ".xlsb":
+        try:
+            from pyxlsb import open_workbook
+        except ImportError:
+            print("[WARNING] pyxlsb no instalado. Ejecute: pip install pyxlsb")
+            return None
+
+        with open_workbook(str(ruta)) as wb:
+            # Si se especifica hoja, buscar solo ahí; si no, recorrer todas
+            if nombre_hoja:
+                hojas_a_revisar = [nombre_hoja] if nombre_hoja in wb.sheets else []
+            else:
+                hojas_a_revisar = list(wb.sheets)
+            if nombre_hoja and not hojas_a_revisar:
+                # Buscar coincidencia aproximada (insensible a mayúsculas)
+                for s in wb.sheets:
+                    if nombre_hoja.lower() in str(s).lower():
+                        hojas_a_revisar = [s]
+                        break
+
+            for sheet_name in hojas_a_revisar:
+                if sheet_name not in wb.sheets:
+                    continue
+                with wb.get_sheet(sheet_name) as sheet:
+                    for row in sheet.rows():
+                        # Construir dict col -> valor por si las celdas son sparse
+                        row_by_col = {}
+                        for cell in row:
+                            if cell is not None:
+                                c = getattr(cell, "c", len(row_by_col))
+                                row_by_col[c] = getattr(cell, "v", cell)
+
+                        for col_idx, val in row_by_col.items():
+                            valor_str = str(val).strip().upper()
+                            if texto_upper in valor_str:
+                                # Buscar valor numérico en columnas siguientes de la misma fila
+                                cols_orden = sorted(row_by_col.keys())
+                                for c in cols_orden:
+                                    if c > col_idx:
+                                        v = row_by_col[c]
+                                        try:
+                                            return float(v)
+                                        except (TypeError, ValueError):
+                                            pass
+                                return None
+        return None
+
+    # Para .xlsx usar pandas/openpyxl
+    try:
+        if nombre_hoja:
+            df_dict = {nombre_hoja: pd.read_excel(ruta, sheet_name=nombre_hoja, header=None)}
+        else:
+            df_dict = pd.read_excel(ruta, sheet_name=None, header=None)
+    except Exception:
+        return None
+
+    for _sheet_name, df in df_dict.items():
+        for _, row in df.iterrows():
+            row_str = " ".join(str(v).upper() for v in row.dropna().astype(str))
+            if texto_upper in row_str:
+                for v in row:
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        continue
+                # Buscar primer número en la fila
+                for v in row:
+                    if isinstance(v, (int, float)) and not pd.isna(v):
+                        return float(v)
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        pass
+    return None
+
+
+def _parsear_valor_monetario(val) -> Optional[float]:
+    """Convierte valor con formato 46.709.214 (punto como miles) a float."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)) and not (isinstance(val, bool)):
+        return float(val)
+    s = str(val).strip().replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def leer_total_ingresos_potencia_firme_anexo(
+    ruta_anexo: Path,
+    nombre_hoja: str,
+    nombre_empresa: str,
+) -> Optional[float]:
+    """
+    Lee el valor TOTAL para una empresa desde la tabla Datos del Anexo Potencia.
+    Estructura: col B=Empresa, col C=Potencia SEN, col D=TOTAL.
+
+    Args:
+        ruta_anexo: Ruta del archivo .xlsb
+        nombre_hoja: Nombre de la hoja (ej: "01.BALANCE POTENCIA Dic-25 def")
+        nombre_empresa: Nombre de la empresa (ej: VIENTOS_DE_RENAICO)
+
+    Returns:
+        Valor en CLP de la columna TOTAL, None si no se encuentra
+    """
+    ruta = Path(ruta_anexo)
+    if not ruta.exists():
+        return None
+
+    nombre_empresa_upper = nombre_empresa.strip().upper()
+    if not nombre_empresa_upper:
+        return None
+
+    if ruta.suffix.lower() == ".xlsb":
+        try:
+            from pyxlsb import open_workbook
+        except ImportError:
+            return None
+
+        with open_workbook(str(ruta)) as wb:
+            if nombre_hoja not in wb.sheets:
+                for s in wb.sheets:
+                    if nombre_hoja.lower() in str(s).lower():
+                        nombre_hoja = s
+                        break
+                else:
+                    return None
+
+            with wb.get_sheet(nombre_hoja) as sheet:
+                # Col B=Empresa (índice 1), Col D=TOTAL (índice 3)
+                # pyxlsb usa columnas 0-based en Cell
+                for row in sheet.rows():
+                    row_by_col = {}
+                    for cell in row:
+                        if cell is not None:
+                            c = getattr(cell, "c", -1)
+                            row_by_col[c] = getattr(cell, "v", cell)
+
+                    # Columna B (índice 1) = Empresa
+                    emp_val = row_by_col.get(1) or row_by_col.get(0)
+                    if emp_val is None:
+                        continue
+                    if str(emp_val).strip().upper() != nombre_empresa_upper:
+                        continue
+
+                    # Columna D (índice 3) = TOTAL; fallback C (índice 2) = Potencia SEN
+                    total_val = row_by_col.get(3) or row_by_col.get(2)
+                    if total_val is not None:
+                        parsed = _parsear_valor_monetario(total_val)
+                        if parsed is not None:
+                            return parsed
+                return None
+
+    # Fallback xlsx con pandas
+    try:
+        df = pd.read_excel(ruta, sheet_name=nombre_hoja, header=None)
+    except Exception:
+        return None
+    # Buscar columna Empresa (B=1) y TOTAL (D=3) - pandas usa 0-based
+    for _, row in df.iterrows():
+        emp_cell = row.iloc[1] if len(row) > 1 else None
+        if emp_cell is None:
+            continue
+        if str(emp_cell).strip().upper() != nombre_empresa_upper:
+            continue
+        total_cell = row.iloc[3] if len(row) > 3 else row.iloc[2]
+        return _parsear_valor_monetario(total_cell)
+    return None
+
+
+def leer_total_ingresos_potencia_firme(
+    anyo: int,
+    mes: int,
+    nombre_empresa: str = "",
+) -> Optional[float]:
+    """
+    Lee el valor TOTAL INGRESOS POR POTENCIA FIRME CLP desde el Anexo 02.b
+    de la carpeta Potencia, hoja "01.BALANCE POTENCIA {Mes}-{Year} def".
+    Busca la fila donde Empresa = nombre_empresa y devuelve el valor de la columna TOTAL.
+
+    Args:
+        anyo: Año
+        mes: Mes (1-12)
+        nombre_empresa: Nombre de la empresa (ej: VIENTOS_DE_RENAICO). Si vacío, usa fallback.
+
+    Returns:
+        Valor en CLP, None si no se encuentra
+    """
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    if archivo is None:
+        print(f"[WARNING] No se encontró Anexo 02.b Potencia para {mes}/{anyo}")
+        return None
+
+    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
+    year2 = str(anyo)[-2:]
+    nombre_hoja = f"01.BALANCE POTENCIA {mes_anexo}-{year2} def"
+
+    if nombre_empresa:
+        valor = leer_total_ingresos_potencia_firme_anexo(
+            archivo, nombre_hoja, nombre_empresa
+        )
+        if valor is not None:
+            print(
+                f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo.name}"
+            )
+            print(
+                f"  -> Dato obtenido ({nombre_empresa}, col TOTAL): {valor:,.2f}"
+            )
+        return valor
+
+    # Fallback: buscar por texto "TOTAL INGRESOS POR POTENCIA FIRME CLP"
+    print(f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo.name}")
+    valor = leer_valor_concepto_anexo_xlsb(
+        archivo,
+        "TOTAL INGRESOS POR POTENCIA FIRME CLP",
+        nombre_hoja=nombre_hoja,
+    )
+    if valor is not None:
+        print(f"  -> Dato obtenido (TOTAL INGRESOS POR POTENCIA FIRME CLP): {valor:,.2f}")
+    return valor
+
+
 def leer_excel_pandas(ruta_archivo: Union[str, Path], hoja: Optional[str] = None, header: Optional[int] = None) -> pd.DataFrame:
     """
     Lee un archivo Excel usando pandas.

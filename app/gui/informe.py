@@ -27,10 +27,8 @@ class InterfazInforme:
         self.root.configure(bg="#E5E5E5")
 
         # Variables
-        self.anyo_desde_var = tk.IntVar(value=datetime.now().year)
-        self.mes_desde_combo = None
-        self.anyo_hasta_var = tk.IntVar(value=datetime.now().year)
-        self.mes_hasta_combo = None
+        self.anyo_var = tk.IntVar(value=datetime.now().year)
+        self.mes_combo = None
         self.barra_var = tk.StringVar(value="")
         self.procesando = False
 
@@ -89,7 +87,7 @@ class InterfazInforme:
         self.main_panel.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
 
     def create_periodo_section(self) -> None:
-        """Crear sección de selección de período (año y mes)."""
+        """Crear sección de selección de año y mes."""
         periodo_frame = tk.Frame(self.main_panel, bg="white")
         periodo_frame.pack(fill=tk.X, padx=30, pady=20)
 
@@ -103,71 +101,48 @@ class InterfazInforme:
         )
         titulo_label.grid(row=0, column=0, padx=10, pady=(0, 5), sticky="w")
 
-        # Frame para rango de fechas
         seleccion_frame = tk.Frame(periodo_frame, bg="white")
         seleccion_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
         meses_lista = [f"{i:02d} - {meses[i]}" for i in range(1, 13)]
 
-        # DESDE
-        desde_label = tk.Label(
+        año_label = tk.Label(
             seleccion_frame,
-            text="Desde:",
+            text="Año:",
             bg="white",
             font=("Arial", 10, "bold"),
             anchor="w",
         )
-        desde_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        año_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
 
-        año_desde_spinbox = tk.Spinbox(
+        año_spinbox = tk.Spinbox(
             seleccion_frame,
             from_=2020,
             to=2030,
-            textvariable=self.anyo_desde_var,
+            textvariable=self.anyo_var,
             font=("Arial", 10),
             width=10,
         )
-        año_desde_spinbox.grid(row=0, column=1, padx=(0, 10), sticky="w")
+        año_spinbox.grid(row=0, column=1, padx=(0, 10), sticky="w")
 
-        self.mes_desde_combo = ttk.Combobox(
+        mes_label = tk.Label(
+            seleccion_frame,
+            text="Mes:",
+            bg="white",
+            font=("Arial", 10, "bold"),
+            anchor="w",
+        )
+        mes_label.grid(row=0, column=2, padx=(0, 10), sticky="w")
+
+        self.mes_combo = ttk.Combobox(
             seleccion_frame,
             values=meses_lista,
             state="readonly",
             font=("Arial", 10),
             width=18,
         )
-        self.mes_desde_combo.grid(row=0, column=2, padx=(0, 30), sticky="w")
-        self.mes_desde_combo.current(datetime.now().month - 1)
-
-        # HASTA
-        hasta_label = tk.Label(
-            seleccion_frame,
-            text="Hasta:",
-            bg="white",
-            font=("Arial", 10, "bold"),
-            anchor="w",
-        )
-        hasta_label.grid(row=0, column=3, padx=(0, 10), sticky="w")
-
-        año_hasta_spinbox = tk.Spinbox(
-            seleccion_frame,
-            from_=2020,
-            to=2030,
-            textvariable=self.anyo_hasta_var,
-            font=("Arial", 10),
-            width=10,
-        )
-        año_hasta_spinbox.grid(row=0, column=4, padx=(0, 10), sticky="w")
-
-        self.mes_hasta_combo = ttk.Combobox(
-            seleccion_frame,
-            values=meses_lista,
-            state="readonly",
-            font=("Arial", 10),
-            width=18,
-        )
-        self.mes_hasta_combo.grid(row=0, column=5, sticky="w")
-        self.mes_hasta_combo.current(datetime.now().month - 1)
+        self.mes_combo.grid(row=0, column=3, sticky="w")
+        self.mes_combo.current(datetime.now().month - 1)
 
         periodo_frame.grid_columnconfigure(0, weight=1)
 
@@ -385,79 +360,34 @@ class InterfazInforme:
             )
             return
 
-        # Validar campos - DESDE
-        anyo_desde = self.anyo_desde_var.get()
-        valor_mes_desde = self.mes_desde_combo.get()
+        # Validar año y mes
+        anyo = self.anyo_var.get()
+        valor_mes = self.mes_combo.get()
 
-        if not valor_mes_desde:
-            messagebox.showerror("Error", "Por favor seleccione un mes de inicio.")
+        if not valor_mes:
+            messagebox.showerror("Error", "Por favor seleccione un mes.")
             return
 
         try:
-            mes_desde = int(valor_mes_desde.split(" - ")[0])
-            if mes_desde < 1 or mes_desde > 12:
+            mes = int(valor_mes.split(" - ")[0])
+            if mes < 1 or mes > 12:
                 messagebox.showerror(
                     "Error",
-                    f"Mes inválido: {mes_desde}. Debe estar entre 1 y 12.",
+                    f"Mes inválido: {mes}. Debe estar entre 1 y 12.",
                 )
                 return
         except (ValueError, IndexError) as e:
-            messagebox.showerror("Error", f"Error al obtener el mes de inicio: {e}")
+            messagebox.showerror("Error", f"Error al obtener el mes: {e}")
             return
 
-        # Validar campos - HASTA
-        anyo_hasta = self.anyo_hasta_var.get()
-        valor_mes_hasta = self.mes_hasta_combo.get()
-
-        if not valor_mes_hasta:
-            messagebox.showerror("Error", "Por favor seleccione un mes de fin.")
-            return
-
-        try:
-            mes_hasta = int(valor_mes_hasta.split(" - ")[0])
-            if mes_hasta < 1 or mes_hasta > 12:
-                messagebox.showerror(
-                    "Error",
-                    f"Mes inválido: {mes_hasta}. Debe estar entre 1 y 12.",
-                )
-                return
-        except (ValueError, IndexError) as e:
-            messagebox.showerror("Error", f"Error al obtener el mes de fin: {e}")
-            return
-
-        # Validar años
-        if anyo_desde < 2020 or anyo_desde > 2030:
+        if anyo < 2020 or anyo > 2030:
             messagebox.showerror(
                 "Error",
-                f"Año de inicio inválido: {anyo_desde}. Debe estar entre 2020 y 2030.",
+                f"Año inválido: {anyo}. Debe estar entre 2020 y 2030.",
             )
             return
 
-        if anyo_hasta < 2020 or anyo_hasta > 2030:
-            messagebox.showerror(
-                "Error",
-                f"Año de fin inválido: {anyo_hasta}. Debe estar entre 2020 y 2030.",
-            )
-            return
-
-        # Validar que "Desde" sea anterior o igual a "Hasta"
-        fecha_desde = anyo_desde * 12 + mes_desde
-        fecha_hasta = anyo_hasta * 12 + mes_hasta
-
-        if fecha_desde > fecha_hasta:
-            messagebox.showerror(
-                "Error",
-                (
-                    f"La fecha de inicio ({meses[mes_desde]} {anyo_desde}) debe ser anterior o igual "
-                    f"a la fecha de fin ({meses[mes_hasta]} {anyo_hasta})."
-                ),
-            )
-            return
-
-        # Mostrar información de depuración
-        print("[DEBUG] Procesando informe por rango:")
-        print(f"  Desde: {meses[mes_desde]} {anyo_desde}")
-        print(f"  Hasta: {meses[mes_hasta]} {anyo_hasta}")
+        print(f"[DEBUG] Procesando informe: {meses[mes]} {anyo}")
 
         ruta_plantilla = getattr(self, "plantilla_entry", None)
         ruta_destino_entry = getattr(self, "destino_entry", None)
@@ -488,10 +418,8 @@ class InterfazInforme:
         thread = threading.Thread(
             target=self.procesar_informe_thread,
             args=(
-                anyo_desde,
-                mes_desde,
-                anyo_hasta,
-                mes_hasta,
+                anyo,
+                mes,
                 ruta_plantilla,
                 ruta_destino,
                 nombre_barra,
@@ -504,76 +432,48 @@ class InterfazInforme:
 
     def procesar_informe_thread(
         self,
-        anyo_desde: int,
-        mes_desde: int,
-        anyo_hasta: int,
-        mes_hasta: int,
+        anyo: int,
+        mes: int,
         ruta_plantilla: str,
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
         tipos_seleccionados: list,
     ) -> None:
-        """Procesar el informe en un hilo separado para un rango de fechas."""
+        """Procesar el informe en un hilo separado para un mes específico."""
         try:
-            # Asegurar que el archivo destino exista como copia de la plantilla
             ruta_destino_path = Path(ruta_destino)
             ruta_destino_path.parent.mkdir(parents=True, exist_ok=True)
-            # Copiar plantilla solo una vez, al inicio del proceso
             from shutil import copyfile
 
             copyfile(ruta_plantilla, ruta_destino)
             print(f"[INFO] Plantilla copiada a destino: {ruta_destino}")
 
-            # Generar lista de meses a procesar
-            meses_a_procesar = []
-            anyo_actual = anyo_desde
-            mes_actual = mes_desde
-
-            while True:
-                meses_a_procesar.append((anyo_actual, mes_actual))
-
-                # Si llegamos al mes final, terminar
-                if anyo_actual == anyo_hasta and mes_actual == mes_hasta:
-                    break
-
-                # Avanzar al siguiente mes
-                mes_actual += 1
-                if mes_actual > 12:
-                    mes_actual = 1
-                    anyo_actual += 1
-
-            total_meses = len(meses_a_procesar)
-            print(f"[INFO] Procesando {total_meses} mes(es) en el rango")
-
-            # Procesar cada mes
-            for idx, (anyo, mes) in enumerate(meses_a_procesar):
-                self.procesar_mes(
-                    anyo,
-                    mes,
-                    ruta_destino,
-                    ruta_destino,
-                    nombre_barra,
-                    nombre_empresa,
-                    tipos_seleccionados,
-                    idx + 1,
-                    total_meses,
-                )
+            # Procesar el mes
+            self.procesar_mes(
+                anyo,
+                mes,
+                ruta_destino,
+                ruta_destino,
+                nombre_barra,
+                nombre_empresa,
+                tipos_seleccionados,
+                1,
+                1,
+            )
 
             # Mensaje final
             self.root.after(0, lambda: self.progress_var.set(100))
             self.root.after(
                 0,
                 lambda: self.progress_text_label.config(
-                    text=f"✓ Proceso completado para {total_meses} mes(es)"
+                    text="✓ Proceso completado"
                 ),
             )
 
-            nombre_mes_desde = meses[mes_desde]
-            nombre_mes_hasta = meses[mes_hasta]
+            nombre_mes = meses[mes]
             mensaje = "Informe generado exitosamente.\n\n"
-            mensaje += f"Período: {nombre_mes_desde} {anyo_desde} - {nombre_mes_hasta} {anyo_hasta}\n"
-            mensaje += f"Total de meses procesados: {total_meses}\n"
+            mensaje += f"Período: {nombre_mes} {anyo}\n"
             if nombre_empresa:
                 mensaje += f"Empresa: {nombre_empresa}\n"
             if nombre_barra:

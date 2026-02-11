@@ -10,7 +10,11 @@ from core.descargar_archivos import (
     meses,
     TIPOS_ARCHIVO,
 )
-from core.leer_excel import LectorBalance, leer_total_ingresos_potencia_firme
+from core.leer_excel import (
+    LectorBalance,
+    leer_total_ingresos_potencia_firme,
+    leer_total_ingresos_sscc,
+)
 from core.plantilla_cliente import escribir_total_en_resultado
 
 
@@ -886,6 +890,19 @@ class InterfazInforme:
                     total_energia,
                     texto_concepto="TOTAL INGRESOS POR ENERGIA CLP",
                 )
+
+            # TOTAL INGRESOS POR SSCC CLP: EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_
+            # Filtra por Nemotecnico Deudor = empresa, suma columna Monto
+            if nombre_empresa:
+                total_sscc = leer_total_ingresos_sscc(anyo, mes, nombre_empresa)
+                if total_sscc is not None:
+                    escribir_total_en_resultado(
+                        ruta_destino,
+                        anyo,
+                        mes,
+                        total_sscc,
+                        texto_concepto="TOTAL INGRESOS POR SSCC CLP",
+                    )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
             if columna_fisico_kwh is not None:

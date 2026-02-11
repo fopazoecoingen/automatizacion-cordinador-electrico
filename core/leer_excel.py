@@ -172,6 +172,103 @@ def encontrar_archivo_anexo_potencia(
     return None
 
 
+def encontrar_archivo_cuadros_pago_sscc(
+    anyo: int,
+    mes: int,
+    carpeta_base: str = "bd_data",
+) -> Optional[Path]:
+    """
+    Encuentra EXCEL 1_CUADROS_PAGO_SSCC_{YYMM}_def.xlsx en la carpeta SSCC descomprimida.
+
+    Returns:
+        Path del archivo, None si no existe
+    """
+    anyo = int(anyo)
+    mes = int(mes)
+    if mes < 1 or mes > 12:
+        return None
+
+    yymm = f"{str(anyo)[-2:]}{str(mes).zfill(2)}"
+    nombres = [
+        f"EXCEL 1_CUADROS_PAGO_SSCC_{yymm}_def.xlsx",
+        f"EXCEL 1_CUADROS_PAGO_SSCC_{yymm}_def.xlsb",
+    ]
+
+    carpeta_descomprimidos = Path(carpeta_base) / "descomprimidos"
+    if not carpeta_descomprimidos.exists():
+        return None
+
+    for carpeta in carpeta_descomprimidos.iterdir():
+        if carpeta.is_dir() and "SSCC" in carpeta.name:
+            for nombre in nombres:
+                archivo = carpeta / nombre
+                if archivo.exists():
+                    return archivo
+            for archivo in carpeta.rglob("EXCEL 1_CUADROS_PAGO_SSCC*"):
+                if archivo.suffix.lower() in (".xlsx", ".xlsb"):
+                    return archivo
+    return None
+
+
+def leer_total_ingresos_sscc(
+    anyo: int,
+    mes: int,
+    nombre_empresa: str = "",
+) -> Optional[float]:
+    """
+    Lee TOTAL INGRESOS POR SSCC CLP desde EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_.
+    Filtra por Nemotecnico Deudor = nombre_empresa y suma columna Monto.
+
+    Returns:
+        Valor en CLP, None si no se encuentra
+    """
+    archivo = encontrar_archivo_cuadros_pago_sscc(anyo, mes)
+    if archivo is None:
+        print(f"[WARNING] No se encontró EXCEL 1_CUADROS_PAGO_SSCC para {mes}/{anyo}")
+        return None
+
+    nombre_empresa_upper = nombre_empresa.strip().upper() if nombre_empresa else ""
+    if not nombre_empresa_upper:
+        print("[WARNING] nombre_empresa vacío para TOTAL INGRESOS POR SSCC")
+        return None
+
+    try:
+        kw = {"sheet_name": "CPI_", "header": 0}
+        if archivo.suffix.lower() == ".xlsb":
+            kw["engine"] = "pyxlsb"
+        df = pd.read_excel(archivo, **kw)
+    except Exception as e:
+        print(f"[WARNING] Error leyendo CPI_: {e}")
+        return None
+
+    # Buscar columna Nemotecnico Deudor (puede tener variaciones de nombre)
+    col_deudor = None
+    col_monto = None
+    for c in df.columns:
+        c_lower = str(c).lower().replace("ó", "o").replace("í", "i")
+        if "nemotecnico" in c_lower and "deudor" in c_lower:
+            col_deudor = c
+        elif "monto" in c_lower:
+            col_monto = c
+
+    if col_deudor is None or col_monto is None:
+        print(f"[WARNING] No se encontraron columnas Nemotecnico Deudor o Monto en CPI_")
+        return None
+
+    df_filtrado = df[
+        df[col_deudor].astype(str).str.strip().str.upper() == nombre_empresa_upper
+    ]
+    total = df_filtrado[col_monto].apply(
+        lambda v: _parsear_valor_monetario(v) or 0
+    ).sum()
+
+    print(
+        f"[INFO] Leyendo TOTAL INGRESOS POR SSCC CLP desde: {archivo.name} (hoja CPI_)"
+    )
+    print(f"  -> Dato obtenido ({nombre_empresa}, Monto): {total:,.2f}")
+    return float(total)
+
+
 def leer_valor_concepto_anexo_xlsb(
     ruta_anexo: Path,
     texto_concepto: str,

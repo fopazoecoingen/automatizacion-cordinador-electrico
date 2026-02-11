@@ -774,15 +774,18 @@ class InterfazInforme:
             columna_barra = None
             columna_monetario = None
             columna_empresa = None
+            columna_fisico_kwh = None
 
             for col in df_balance.columns:
-                col_lower = str(col).lower()
+                col_lower = str(col).lower().replace(" ", "_")
                 if col_lower == "barra":
                     columna_barra = col
                 elif col_lower == "monetario":
                     columna_monetario = col
-                elif col_lower in ("nombre_corto_empresa", "nombre corto empresa"):
+                elif "nombre_corto_empresa" in col_lower or "nombre corto empresa" in str(col).lower():
                     columna_empresa = col
+                elif "fisico" in col_lower and "kwh" in col_lower:
+                    columna_fisico_kwh = col
 
             if columna_monetario is None:
                 print("[ERROR] No se encontró la columna 'monetario' en el DataFrame")
@@ -847,13 +850,36 @@ class InterfazInforme:
                 f"{total_monetario:,.2f}"
             )
 
-            # Escribir en plantilla del cliente mediante Excel COM
+            # Escribir TOTAL INGRESOS POR POTENCIA FIRME CLP en plantilla
             escribir_total_en_resultado(
                 ruta_destino,
                 anyo,
                 mes,
                 total_monetario,
+                texto_concepto="TOTAL INGRESOS POR POTENCIA FIRME CLP",
             )
+
+            # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
+            if columna_fisico_kwh is not None:
+                total_fisico_kwh = (
+                    df_guardar[columna_fisico_kwh].dropna().astype(float).sum()
+                )
+                importacion_mwh = abs(total_fisico_kwh) / 1000.0
+                print(
+                    f"[INFO] IMPORTACION MWh para {nombre_mes} {anyo}: "
+                    f"{importacion_mwh:,.2f} (desde {total_fisico_kwh:,.0f} kWh)"
+                )
+                print(f"  -> Dato obtenido (IMPORTACION MWh): {importacion_mwh:,.2f}")
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    importacion_mwh,
+                    texto_concepto="IMPORTACION MWh",
+                )
+            else:
+                print("[WARNING] No se encontró la columna 'fisico_kwh' en Balance Valorizado")
+
             exito = True
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(85)))

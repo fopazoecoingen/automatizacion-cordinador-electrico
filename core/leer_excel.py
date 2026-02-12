@@ -137,6 +137,9 @@ def encontrar_archivo_anexo_potencia(
     Encuentra el archivo Anexo 02.b Cuadros de Pago_Potencia_SEN_{Mes}{Year}_Simplificado
     en la carpeta descomprimida del ZIP de Potencia.
 
+    IMPORTANTE: Solo devuelve el anexo que coincida con el mes/año solicitado
+    (ej: Dic25 para diciembre 2025, Oct25 para octubre 2025).
+
     Args:
         anyo: Año del archivo
         mes: Mes del archivo (1-12)
@@ -152,6 +155,8 @@ def encontrar_archivo_anexo_potencia(
 
     mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
     year2 = str(anyo)[-2:]
+    periodo_en_nombre = f"{mes_anexo}{year2}".lower()  # ej: dic25, oct25
+
     # Buscar .xlsb y .xlsx
     nombres_posibles = [
         f"Anexo 02.b Cuadros de Pago_Potencia_SEN_{mes_anexo}{year2}_Simplificado.xlsb",
@@ -162,16 +167,31 @@ def encontrar_archivo_anexo_potencia(
     if not carpeta_descomprimidos.exists():
         return None
 
-    # Buscar en carpetas que contengan "Potencia"
+    # Buscar en carpetas que contengan "Potencia" Y el periodo (ej: 2512 para dic)
+    yymm = f"{year2}{str(mes).zfill(2)}"  # 2512 para dic 2025
+    for carpeta in sorted(carpeta_descomprimidos.iterdir(), reverse=True):
+        if not carpeta.is_dir() or "Potencia" not in carpeta.name:
+            continue
+        # Preferir carpeta que contenga el periodo correcto (ej: 2512 en nombre)
+        if yymm not in carpeta.name:
+            continue  # Evitar carpetas de otros meses (ej: 2510)
+        for nombre in nombres_posibles:
+            archivo = carpeta / nombre
+            if archivo.exists():
+                return archivo
+        for archivo in carpeta.rglob("Anexo 02.b*Potencia*Simplificado*"):
+            if archivo.suffix.lower() in (".xlsb", ".xlsx") and periodo_en_nombre in archivo.name.lower():
+                return archivo
+
+    # Fallback: buscar cualquier anexo que coincida con el periodo en el nombre
     for carpeta in carpeta_descomprimidos.iterdir():
         if carpeta.is_dir() and "Potencia" in carpeta.name:
             for nombre in nombres_posibles:
                 archivo = carpeta / nombre
                 if archivo.exists():
                     return archivo
-            # Buscar también en subcarpetas
             for archivo in carpeta.rglob("Anexo 02.b*Potencia*Simplificado*"):
-                if archivo.suffix.lower() in (".xlsb", ".xlsx"):
+                if archivo.suffix.lower() in (".xlsb", ".xlsx") and periodo_en_nombre in archivo.name.lower():
                     return archivo
 
     return None
@@ -592,12 +612,15 @@ def leer_compra_venta_energia_gm_holdings(
         lambda v: _parsear_valor_monetario(v) or 0
     ).sum()
 
+    # El valor en Excel suele ser negativo (venta/egreso); para el informe debe ser positivo
+    total = abs(float(total))
+
     print(
         f"[INFO] Leyendo Compra Venta Energia GM Holdings CLP desde: {archivo.name} (hoja Contratos, "
         "Resumen Contratos Generadores Físicos)"
     )
     print(f"  -> Dato obtenido (VENTA[CLP]): {total:,.2f}")
-    return float(total)
+    return total
 
 
 def _encontrar_hoja_por_patron(
@@ -696,6 +719,7 @@ def _leer_valor_por_empresa_y_columna(
     nombre_hoja: str,
     nombre_empresa: str,
     col_valor: str,
+    debug: bool = False,
 ) -> Optional[float]:
     """
     Lee valor buscando la fila por USUARIOS/empresa y la columna por nombre (ej: Total).
@@ -703,15 +727,18 @@ def _leer_valor_por_empresa_y_columna(
     Detecta dinámicamente la fila de encabezados (puede no ser la primera).
     """
     try:
+        kw = {"sheet_name": nombre_hoja, "header": None}
+        if ruta.suffix.lower() == ".xlsb":
+            kw["engine"] = "pyxlsb"
         try:
-            df_raw = pd.read_excel(ruta, sheet_name=nombre_hoja, header=None)
+            df_raw = pd.read_excel(ruta, **kw)
         except ValueError:
-            xl = pd.ExcelFile(ruta)
+            xl = pd.ExcelFile(ruta, engine="pyxlsb" if ruta.suffix.lower() == ".xlsb" else None)
             hoja = next((s for s in xl.sheet_names if nombre_hoja.lower() in str(s).lower()), None)
             if hoja is None:
                 print(f"[DEBUG] Hoja no encontrada para IT: {nombre_hoja}")
                 return None
-            df_raw = pd.read_excel(ruta, sheet_name=hoja, header=None)
+            df_raw = pd.read_excel(ruta, sheet_name=hoja, header=None, engine="pyxlsb" if ruta.suffix.lower() == ".xlsb" else None)
 
         # Buscar fila donde la PRIMERA celda sea "USUARIOS" o "EMPRESA" (evitar "Nota: Usuarios Pagan")
         header_row = None
@@ -761,23 +788,36 @@ def _leer_valor_por_empresa_y_columna(
         if col_empresa is None:
             col_empresa = df.columns[0]
 
+        # Para IT Potencia: la hoja tiene dos bloques (Total y Total general).
+        # El valor correcto suele estar en "Total" del primer bloque, NO en "Total general".
         col_target = None
+        # Primero: buscar columna exacta "Total" (sin "general")
         for idx, c in enumerate(df.columns):
             c_str = str(c).strip().lower() if c else ""
-            if c_str and col_valor.lower() in c_str:
-                col_target = df.columns[idx]
+            if c_str == "total" and "general" not in c_str:
+                col_target = c
                 break
         if col_target is None:
-            # Total suele ser la última columna en estas tablas
+            # Fallback: primera columna que contiene "total" pero NO "general"
+            for idx, c in enumerate(df.columns):
+                c_str = str(c).strip().lower() if c else ""
+                if c_str and "total" in c_str and "general" not in c_str:
+                    col_target = c
+                    break
+        if col_target is None:
+            # Último recurso: Total general
             for idx in range(len(df.columns) - 1, -1, -1):
                 c = df.columns[idx]
-                if str(c).strip().lower() == "total":
+                c_str = str(c).strip().lower() if c else ""
+                if c_str and "total" in c_str:
                     col_target = c
                     break
         if col_target is None:
             print(f"[DEBUG] No se encontró columna '{col_valor}'. Primeras: {list(df.columns)[:5]}... últimas: {list(df.columns)[-3:]}")
             return None
 
+        total = 0.0
+        found_any = False
         for idx, row in df.iterrows():
             celda = row.get(col_empresa)
             if isinstance(celda, pd.Series):
@@ -796,8 +836,17 @@ def _leer_valor_por_empresa_y_columna(
                     val = val.dropna().iloc[0] if len(val.dropna()) > 0 else None
                 parsed = _parsear_valor_monetario(val)
                 if parsed is not None:
-                    return parsed
+                    total += parsed
+                    found_any = True
+                    if debug:
+                        print(f"  [DEBUG IT] Fila '{celda}' -> col '{col_target}' = {parsed:,.2f}")
 
+        if debug and found_any:
+            print(f"  [DEBUG IT] Columnas: {list(df.columns)}")
+            print(f"  [DEBUG IT] Col usada: {col_target}, Total sumado: {total:,.2f}")
+
+        if found_any:
+            return total
         print(f"[DEBUG] No se encontró fila para '{nombre_empresa}' en col '{col_empresa}'. "
               f"Columnas: {list(df.columns)[:8]}...")
         return None
@@ -1185,8 +1234,10 @@ def leer_ingresos_por_it(
             nombre_hoja,
             nombre_empresa.strip(),
             col_valor="Total",
+            debug=False,  # Activar debug=True para diagnóstico
         )
         if valor is not None:
+            valor = abs(float(valor))
             print(f"[INFO] Leyendo INGRESOS POR IT POTENCIA desde: {archivo.name} (hoja {nombre_hoja}, col Total)")
             print(f"  -> Dato obtenido ({nombre_empresa}): {valor:,.2f}")
             return valor
@@ -1206,6 +1257,7 @@ def leer_ingresos_por_it(
                 nombre_hoja=nombre_hoja,
             )
         if valor is not None:
+            valor = abs(float(valor))
             print(f"[INFO] Leyendo INGRESOS POR IT POTENCIA desde: {archivo.name} (hoja {nombre_hoja})")
             print(f"  -> Dato obtenido: {valor:,.2f}")
             return valor

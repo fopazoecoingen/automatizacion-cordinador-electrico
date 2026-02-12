@@ -66,6 +66,7 @@ desktop.ini
 .env
 .env.local
 config.local.py
+config_ultimos_datos.json
 
 # Archivos de salida generados
 informe_*.xlsx

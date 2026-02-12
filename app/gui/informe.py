@@ -1,3 +1,4 @@
+import json
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -21,12 +22,30 @@ from core.leer_excel import (
 from core.plantilla_cliente import escribir_total_en_resultado
 
 
+# Paleta de colores profesional - Sector energético
+COLORS = {
+    "bg_main": "#F0F4F8",
+    "bg_card": "#FFFFFF",
+    "bg_header": "#1A365D",
+    "accent": "#2B6CB0",
+    "accent_hover": "#2C5282",
+    "accent_light": "#EBF8FF",
+    "text_primary": "#1A202C",
+    "text_secondary": "#4A5568",
+    "text_muted": "#718096",
+    "border": "#E2E8F0",
+    "success": "#38A169",
+    "progress": "#3182CE",
+}
+
+
 class InterfazInforme:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Generación de Informe Eléctrico")
-        self.root.geometry("900x700")
-        self.root.configure(bg="#E5E5E5")
+        self.root.geometry("920x760")
+        self.root.minsize(700, 600)
+        self.root.configure(bg=COLORS["bg_main"])
 
         # Variables
         self.anyo_var = tk.IntVar(value=datetime.now().year)
@@ -37,11 +56,11 @@ class InterfazInforme:
         # Configurar estilo
         self.setup_styles()
 
-        # Crear panel principal blanco
-        self.create_main_panel()
+        # Crear header
+        self.create_header()
 
-        # Crear controles de ventana (simulación de los tres puntos)
-        self.create_window_controls()
+        # Crear panel principal
+        self.create_main_panel()
 
         # Crear sección de selección de período
         self.create_periodo_section()
@@ -58,90 +77,178 @@ class InterfazInforme:
         # Crear botón de crear informe
         self.create_action_button()
 
+        # Cargar últimos datos guardados
+        self._cargar_ultimos_datos()
+
+    def _ruta_config(self) -> Path:
+        """Ruta del archivo JSON con los últimos datos ingresados."""
+        return Path(__file__).resolve().parent.parent.parent / "config_ultimos_datos.json"
+
+    def _guardar_ultimos_datos(
+        self,
+        anyo: int,
+        mes: int,
+        empresa: str,
+        barra: str,
+        nombre_medidor: str,
+        plantilla: str,
+        destino: str,
+    ) -> None:
+        """Guarda los últimos datos ingresados en un archivo JSON."""
+        try:
+            datos = {
+                "anyo": anyo,
+                "mes": mes,
+                "empresa": empresa,
+                "barra": barra,
+                "nombre_medidor": nombre_medidor,
+                "plantilla": plantilla,
+                "destino": destino,
+            }
+            with open(self._ruta_config(), "w", encoding="utf-8") as f:
+                json.dump(datos, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[WARNING] No se pudieron guardar los últimos datos: {e}")
+
+    def _cargar_ultimos_datos(self) -> None:
+        """Carga los últimos datos guardados y los aplica a los inputs."""
+        try:
+            ruta = self._ruta_config()
+            if not ruta.exists():
+                return
+            with open(ruta, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            if datos.get("anyo"):
+                self.anyo_var.set(int(datos["anyo"]))
+            if datos.get("mes") and self.mes_combo:
+                mes = int(datos["mes"])
+                if 1 <= mes <= 12:
+                    self.mes_combo.current(mes - 1)
+            if datos.get("empresa") is not None and "Empresa" in self.entries:
+                self.entries["Empresa"].delete(0, tk.END)
+                self.entries["Empresa"].insert(0, str(datos["empresa"]))
+            if datos.get("barra") is not None and "Barra" in self.entries:
+                self.entries["Barra"].delete(0, tk.END)
+                self.entries["Barra"].insert(0, str(datos["barra"]))
+            if datos.get("nombre_medidor") is not None and "Nombre Medidor" in self.entries:
+                self.entries["Nombre Medidor"].delete(0, tk.END)
+                self.entries["Nombre Medidor"].insert(0, str(datos["nombre_medidor"]))
+            if datos.get("plantilla") and hasattr(self, "plantilla_entry"):
+                self.plantilla_entry.delete(0, tk.END)
+                self.plantilla_entry.insert(0, str(datos["plantilla"]))
+            if datos.get("destino") and hasattr(self, "destino_entry"):
+                self.destino_entry.delete(0, tk.END)
+                self.destino_entry.insert(0, str(datos["destino"]))
+        except Exception as e:
+            print(f"[WARNING] No se pudieron cargar los últimos datos: {e}")
+
     def setup_styles(self) -> None:
         """Configurar estilos personalizados."""
         style = ttk.Style()
         style.theme_use("clam")
 
-        # Configurar estilo para el botón púrpura
         style.configure(
-            "Purple.TButton",
-            background="#7B2CBF",
+            "Accent.TButton",
+            background=COLORS["accent"],
             foreground="white",
             borderwidth=0,
             focuscolor="none",
-            padding=10,
+            padding=(20, 12),
+            font=("Segoe UI", 10, "bold"),
         )
-        style.map("Purple.TButton", background=[("active", "#6A1B9A"), ("pressed", "#5A1A8A")])
+        style.map(
+            "Accent.TButton",
+            background=[("active", COLORS["accent_hover"]), ("pressed", COLORS["accent_hover"])],
+        )
 
-    def create_window_controls(self) -> None:
-        """Crear controles de ventana simulados (tres puntos)."""
-        controls_frame = tk.Frame(self.root, bg="#E5E5E5")
-        controls_frame.pack(fill=tk.X, padx=10, pady=5)
+    def create_header(self) -> None:
+        """Crear cabecera de la aplicación."""
+        header = tk.Frame(self.root, bg=COLORS["bg_header"], height=60)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
 
-        for _ in range(3):
-            dot = tk.Label(controls_frame, text="●", bg="#E5E5E5", fg="#999999", font=("Arial", 8))
-            dot.pack(side=tk.LEFT, padx=2)
+        title = tk.Label(
+            header,
+            text="Generación de Informe Eléctrico",
+            bg=COLORS["bg_header"],
+            fg="white",
+            font=("Segoe UI", 18, "bold"),
+        )
+        title.pack(side=tk.LEFT, padx=24, pady=18)
 
     def create_main_panel(self) -> None:
-        """Crear panel principal blanco."""
-        self.main_panel = tk.Frame(self.root, bg="white", relief=tk.FLAT)
-        self.main_panel.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        """Crear panel principal con contenedor tipo card."""
+        container = tk.Frame(self.root, bg=COLORS["bg_main"], padx=24, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.main_panel = tk.Frame(
+            container,
+            bg=COLORS["bg_card"],
+            relief=tk.FLAT,
+            highlightbackground=COLORS["border"],
+            highlightthickness=1,
+        )
+        self.main_panel.pack(fill=tk.BOTH, expand=True)
 
     def create_periodo_section(self) -> None:
         """Crear sección de selección de año y mes."""
-        periodo_frame = tk.Frame(self.main_panel, bg="white")
-        periodo_frame.pack(fill=tk.X, padx=30, pady=20)
+        periodo_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
+        periodo_frame.pack(fill=tk.X, padx=32, pady=(24, 16))
 
-        # Título
         titulo_label = tk.Label(
             periodo_frame,
             text="Período",
-            bg="white",
-            font=("Arial", 10),
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_primary"],
+            font=("Segoe UI", 11, "bold"),
             anchor="w",
         )
-        titulo_label.grid(row=0, column=0, padx=10, pady=(0, 5), sticky="w")
+        titulo_label.grid(row=0, column=0, padx=0, pady=(0, 8), sticky="w")
 
-        seleccion_frame = tk.Frame(periodo_frame, bg="white")
-        seleccion_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        seleccion_frame = tk.Frame(periodo_frame, bg=COLORS["bg_card"])
+        seleccion_frame.grid(row=1, column=0, padx=0, pady=0, sticky="ew")
 
         meses_lista = [f"{i:02d} - {meses[i]}" for i in range(1, 13)]
 
         año_label = tk.Label(
             seleccion_frame,
-            text="Año:",
-            bg="white",
-            font=("Arial", 10, "bold"),
+            text="Año",
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_secondary"],
+            font=("Segoe UI", 10),
             anchor="w",
         )
-        año_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        año_label.grid(row=0, column=0, padx=(0, 8), sticky="w")
 
         año_spinbox = tk.Spinbox(
             seleccion_frame,
             from_=2020,
             to=2030,
             textvariable=self.anyo_var,
-            font=("Arial", 10),
-            width=10,
+            font=("Segoe UI", 10),
+            width=8,
+            relief=tk.SOLID,
+            bd=1,
+            highlightthickness=0,
         )
-        año_spinbox.grid(row=0, column=1, padx=(0, 10), sticky="w")
+        año_spinbox.grid(row=0, column=1, padx=(0, 20), sticky="w")
 
         mes_label = tk.Label(
             seleccion_frame,
-            text="Mes:",
-            bg="white",
-            font=("Arial", 10, "bold"),
+            text="Mes",
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_secondary"],
+            font=("Segoe UI", 10),
             anchor="w",
         )
-        mes_label.grid(row=0, column=2, padx=(0, 10), sticky="w")
+        mes_label.grid(row=0, column=2, padx=(0, 8), sticky="w")
 
         self.mes_combo = ttk.Combobox(
             seleccion_frame,
             values=meses_lista,
             state="readonly",
-            font=("Arial", 10),
-            width=18,
+            font=("Segoe UI", 10),
+            width=20,
         )
         self.mes_combo.grid(row=0, column=3, sticky="w")
         self.mes_combo.current(datetime.now().month - 1)
@@ -150,8 +257,18 @@ class InterfazInforme:
 
     def create_config_section(self) -> None:
         """Crear sección de configuración con inputs de texto."""
-        config_frame = tk.Frame(self.main_panel, bg="white")
-        config_frame.pack(fill=tk.X, padx=30, pady=20)
+        config_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
+        config_frame.pack(fill=tk.X, padx=32, pady=(8, 16))
+
+        titulo_config = tk.Label(
+            config_frame,
+            text="Filtros de consulta",
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_primary"],
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        )
+        titulo_config.grid(row=0, column=0, columnspan=3, padx=0, pady=(0, 8), sticky="w")
 
         labels = ["Empresa", "Barra", "Nombre Medidor"]
         default_values = ["VIENTOS_DE_RENAICO", "", ""]
@@ -159,42 +276,46 @@ class InterfazInforme:
         self.entries = {}
 
         for i, (label, default) in enumerate(zip(labels, default_values)):
-            # Label
             lbl = tk.Label(
                 config_frame,
                 text=label,
-                bg="white",
-                font=("Arial", 10),
+                bg=COLORS["bg_card"],
+                fg=COLORS["text_secondary"],
+                font=("Segoe UI", 10),
                 anchor="w",
             )
-            lbl.grid(row=0, column=i, padx=10, pady=(0, 5), sticky="w")
+            lbl.grid(row=1, column=i, padx=(0, 8), pady=(0, 4), sticky="w")
 
-            # Entry (campo de texto)
-            entry = tk.Entry(config_frame, width=25, font=("Arial", 10))
+            entry = tk.Entry(
+                config_frame,
+                width=28,
+                font=("Segoe UI", 10),
+                relief=tk.SOLID,
+                bd=1,
+                fg=COLORS["text_primary"],
+            )
             if default:
                 entry.insert(0, default)
-            entry.grid(row=1, column=i, padx=10, pady=5, sticky="ew")
+            entry.grid(row=2, column=i, padx=(0, 24 if i < 2 else 0), pady=(0, 0), sticky="ew")
             self.entries[label] = entry
 
-        # Configurar pesos de columnas
         for i in range(3):
             config_frame.grid_columnconfigure(i, weight=1)
 
-        # Nota sobre filtros
         nota_label = tk.Label(
             config_frame,
-            text="Nota: Barra vacío = todas. Nombre Medidor aplica solo a IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP.",
-            bg="white",
-            font=("Arial", 8),
-            fg="#666666",
+            text="Barra vacío = todas. Nombre Medidor aplica solo a IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP.",
+            bg=COLORS["bg_card"],
+            font=("Segoe UI", 9),
+            fg=COLORS["text_muted"],
             anchor="w",
         )
-        nota_label.grid(row=2, column=0, columnspan=3, padx=10, pady=(5, 0), sticky="w")
+        nota_label.grid(row=3, column=0, columnspan=3, padx=0, pady=(8, 0), sticky="w")
 
     def create_file_section(self) -> None:
         """Crear sección de selección de archivos (plantilla y archivo de salida)."""
-        file_frame = tk.Frame(self.main_panel, bg="white")
-        file_frame.pack(fill=tk.X, padx=30, pady=20)
+        file_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
+        file_frame.pack(fill=tk.X, padx=32, pady=(8, 16))
 
         # Plantilla base del cliente
         self.create_file_input(
@@ -223,44 +344,51 @@ class InterfazInforme:
         modo: str = "open",
     ) -> None:
         """Crear un campo de entrada de archivo con botón de exploración."""
-        # Label
         lbl = tk.Label(
             parent,
             text=label_text,
-            bg="white",
-            font=("Arial", 10),
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_secondary"],
+            font=("Segoe UI", 10),
             anchor="w",
         )
-        lbl.grid(row=row * 2, column=0, padx=10, pady=(0, 5), sticky="w")
+        lbl.grid(row=row * 2, column=0, padx=0, pady=(12, 4), sticky="w")
 
-        # Frame para entrada y botón
-        input_frame = tk.Frame(parent, bg="white")
-        input_frame.grid(row=row * 2 + 1, column=0, padx=10, pady=5, sticky="ew")
+        input_frame = tk.Frame(parent, bg=COLORS["bg_card"])
+        input_frame.grid(row=row * 2 + 1, column=0, padx=0, pady=(0, 4), sticky="ew")
 
-        # Campo de texto
-        entry = tk.Entry(input_frame, font=("Arial", 10), width=50)
+        entry = tk.Entry(
+            input_frame,
+            font=("Segoe UI", 10),
+            width=55,
+            relief=tk.SOLID,
+            bd=1,
+            fg=COLORS["text_primary"],
+        )
         if default_path:
             entry.insert(0, default_path)
-        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
 
-        # Guardar referencia al entry
         if label_text.startswith("Plantilla"):
             self.plantilla_entry = entry
         elif label_text.startswith("Ruta de destino"):
             self.destino_entry = entry
 
-        # Botón de exploración
         browse_btn = tk.Button(
             input_frame,
-            text="▼",
-            font=("Arial", 8),
-            bg="white",
-            fg="#666666",
+            text="Examinar",
+            font=("Segoe UI", 9),
+            bg=COLORS["border"],
+            fg=COLORS["text_primary"],
             relief=tk.FLAT,
-            width=3,
+            padx=14,
+            pady=4,
+            cursor="hand2",
             command=lambda: self.browse_file(entry, label_text, modo),
         )
         browse_btn.pack(side=tk.RIGHT)
+        browse_btn.bind("<Enter>", lambda e: browse_btn.config(bg="#CBD5E0"))
+        browse_btn.bind("<Leave>", lambda e: browse_btn.config(bg=COLORS["border"]))
 
         parent.grid_columnconfigure(0, weight=1)
 
@@ -285,71 +413,65 @@ class InterfazInforme:
 
     def create_progress_section(self) -> None:
         """Crear sección de progreso."""
-        progress_frame = tk.Frame(self.main_panel, bg="white")
-        progress_frame.pack(fill=tk.X, padx=30, pady=20)
+        progress_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
+        progress_frame.pack(fill=tk.X, padx=32, pady=(8, 16))
 
-        # Label de progreso
         self.progress_text_label = tk.Label(
             progress_frame,
             text="Esperando inicio del proceso...",
-            bg="white",
-            font=("Arial", 10),
+            bg=COLORS["bg_card"],
+            fg=COLORS["text_secondary"],
+            font=("Segoe UI", 10),
             anchor="w",
         )
-        self.progress_text_label.pack(fill=tk.X, pady=(0, 10))
+        self.progress_text_label.pack(fill=tk.X, pady=(0, 8))
 
-        # Barra de progreso
         self.progress_var = tk.DoubleVar()
         self.progress_var.set(0)
 
+        style = ttk.Style()
+        style.configure(
+            "TProgressbar",
+            background=COLORS["progress"],
+            troughcolor=COLORS["border"],
+            borderwidth=0,
+            thickness=8,
+        )
         self.progress_bar = ttk.Progressbar(
             progress_frame,
             variable=self.progress_var,
             maximum=100,
             length=400,
             mode="determinate",
-            style="TProgressbar",
         )
         self.progress_bar.pack(fill=tk.X)
 
-        # Configurar color de la barra de progreso
-        style = ttk.Style()
-        style.configure(
-            "TProgressbar",
-            background="#20B2AA",
-            troughcolor="#E0E0E0",
-            borderwidth=0,
-            lightcolor="#20B2AA",
-            darkcolor="#20B2AA",
-        )
-
     def create_action_button(self) -> None:
         """Crear botón de crear informe."""
-        button_frame = tk.Frame(self.main_panel, bg="white")
-        button_frame.pack(fill=tk.X, padx=30, pady=20)
+        button_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
+        button_frame.pack(fill=tk.X, padx=32, pady=(16, 28))
 
-        # Frame para alinear el botón a la derecha
-        right_frame = tk.Frame(button_frame, bg="white")
+        right_frame = tk.Frame(button_frame, bg=COLORS["bg_card"])
         right_frame.pack(side=tk.RIGHT)
 
-        # Botón púrpura
         self.create_btn = tk.Button(
             right_frame,
-            text="Crear Informe",
-            font=("Arial", 11, "bold"),
-            bg="#7B2CBF",
+            text="  Crear Informe  ",
+            font=("Segoe UI", 11, "bold"),
+            bg=COLORS["accent"],
             fg="white",
             relief=tk.FLAT,
-            padx=30,
-            pady=10,
+            padx=28,
+            pady=12,
             cursor="hand2",
             command=self.crear_informe,
+            activebackground=COLORS["accent_hover"],
+            activeforeground="white",
         )
         self.create_btn.pack()
 
-        # Efecto hover
-        self.create_btn.bind("<Enter>", lambda e: self.create_btn.config(bg="#6A1B9A"))
-        self.create_btn.bind("<Leave>", lambda e: self.create_btn.config(bg="#7B2CBF"))
+        self.create_btn.bind("<Enter>", lambda e: self.create_btn.config(bg=COLORS["accent_hover"]))
+        self.create_btn.bind("<Leave>", lambda e: self.create_btn.config(bg=COLORS["accent"]))
 
     # --- Lógica de procesamiento -------------------------------------------------
 
@@ -412,9 +534,20 @@ class InterfazInforme:
         nombre_empresa = self.entries["Empresa"].get().strip()
         nombre_medidor = self.entries["Nombre Medidor"].get().strip()
 
+        # Guardar últimos datos para próxima ejecución
+        self._guardar_ultimos_datos(
+            anyo=anyo,
+            mes=mes,
+            empresa=nombre_empresa,
+            barra=nombre_barra,
+            nombre_medidor=nombre_medidor,
+            plantilla=ruta_plantilla,
+            destino=ruta_destino,
+        )
+
         # Iniciar proceso en hilo separado
         self.procesando = True
-        self.create_btn.config(state=tk.DISABLED, text="Procesando...")
+        self.create_btn.config(state=tk.DISABLED, text="  Procesando...  ")
         self.progress_var.set(0)
         self.progress_text_label.config(text="Iniciando proceso...")
 
@@ -503,7 +636,11 @@ class InterfazInforme:
             self.procesando = False
             self.root.after(
                 0,
-                lambda: self.create_btn.config(state=tk.NORMAL, text="Crear Informe"),
+                lambda: self.create_btn.config(
+                    state=tk.NORMAL,
+                    text="  Crear Informe  ",
+                    bg=COLORS["accent"],
+                ),
             )
             self.root.after(0, lambda: self.progress_var.set(0))
 

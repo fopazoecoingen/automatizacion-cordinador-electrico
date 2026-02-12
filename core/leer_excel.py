@@ -295,14 +295,27 @@ def leer_compra_venta_energia_gm_holdings(
         print(f"[WARNING] Error leyendo hoja Contratos: {e}")
         return None
 
+    # Patrones de columna para Total/Venta CLP (ordenados por preferencia)
+    _patrones_clp = [
+        lambda x: "total" in x and "clp" in x,
+        lambda x: "venta" in x and "clp" in x,
+        lambda x: "venta[clp]" in x or "venta (clp)" in x,
+        lambda x: "monto" in x and "clp" in x,
+        lambda x: x.strip().lower() == "total clp",
+        lambda x: x.strip().lower() == "clp",
+    ]
     col_total = None
     for c in df.columns:
         c_lower = str(c).strip().lower()
-        if "total" in c_lower and "clp" in c_lower:
-            col_total = c
+        for pred in _patrones_clp:
+            if pred(c_lower):
+                col_total = c
+                break
+        if col_total is not None:
             break
     if col_total is None:
         print(f"[WARNING] No se encontró columna Total CLP en Contratos")
+        print(f"  Columnas disponibles: {list(df.columns)}")
         return None
 
     df_guardar = df.copy()
@@ -579,6 +592,43 @@ def leer_total_ingresos_potencia_firme(
     )
     if valor is not None:
         print(f"  -> Dato obtenido (TOTAL INGRESOS POR POTENCIA FIRME CLP): {valor:,.2f}")
+    return valor
+
+
+def leer_ingresos_por_it(
+    anyo: int,
+    mes: int,
+    nombre_empresa: str = "",
+) -> Optional[float]:
+    """
+    Lee INGRESOS POR IT desde Anexo 02.b Cuadros de Pago_Potencia_SEN,
+    hoja "02.IT POTENCIA {Mes}-{YY} def" (ej: "02.IT POTENCIA Dic-25 def").
+
+    Busca el texto "INGRESOS POR IT" y devuelve el valor numérico asociado.
+    Si nombre_empresa está definido, busca la fila donde Empresa = nombre_empresa
+    y la columna TOTAL (si la hoja tiene esa estructura).
+
+    Returns:
+        Valor en CLP, None si no se encuentra
+    """
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    if archivo is None:
+        print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR IT {mes}/{anyo}")
+        return None
+
+    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
+    year2 = str(anyo)[-2:]
+    nombre_hoja = f"02.IT POTENCIA {mes_anexo}-{year2} def"
+
+    # Buscar por texto "INGRESOS POR IT"
+    valor = leer_valor_concepto_anexo_xlsb(
+        archivo,
+        "INGRESOS POR IT",
+        nombre_hoja=nombre_hoja,
+    )
+    if valor is not None:
+        print(f"[INFO] Leyendo INGRESOS POR IT desde: {archivo.name} (hoja {nombre_hoja})")
+        print(f"  -> Dato obtenido (INGRESOS POR IT): {valor:,.2f}")
     return valor
 
 

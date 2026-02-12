@@ -13,6 +13,7 @@ from core.descargar_archivos import (
 from core.leer_excel import (
     LectorBalance,
     leer_compra_venta_energia_gm_holdings,
+    leer_ingresos_por_it,
     leer_total_ingresos_potencia_firme,
     leer_total_ingresos_sscc,
 )
@@ -774,6 +775,17 @@ class InterfazInforme:
                 total_monetario,
                 texto_concepto="TOTAL INGRESOS POR POTENCIA FIRME CLP",
             )
+
+            # INGRESOS POR IT: Anexo 02.b Potencia, hoja 02.IT POTENCIA {Mes}-{YY} def
+            total_it = leer_ingresos_por_it(anyo, mes, nombre_empresa=nombre_empresa)
+            if total_it is not None:
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    total_it,
+                    texto_concepto="INGRESOS POR IT",
+                )
 
             # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
             if columna_monetario is not None:

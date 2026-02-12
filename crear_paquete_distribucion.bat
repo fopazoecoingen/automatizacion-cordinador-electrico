@@ -1,6 +1,8 @@
 @echo off
+chcp 65001 >nul
 echo ========================================
 echo Creando paquete de distribucion
+echo Generador Informe Electrico
 echo ========================================
 echo.
 
@@ -17,20 +19,26 @@ echo Verificando Python...
 python --version
 
 echo.
+echo Instalando dependencias...
+python -m pip install --upgrade pip --quiet
+python -m pip install -r requirements.txt --quiet
+if errorlevel 1 (
+    echo ERROR: No se pudieron instalar las dependencias
+    pause
+    exit /b 1
+)
+
+echo.
 echo Verificando PyInstaller...
 python -c "import PyInstaller" 2>nul
 if errorlevel 1 (
     echo PyInstaller no esta instalado. Instalando...
-    python -m pip install --upgrade pip
     python -m pip install pyinstaller
     if errorlevel 1 (
         echo ERROR: No se pudo instalar PyInstaller
         pause
         exit /b 1
     )
-    echo PyInstaller instalado correctamente.
-) else (
-    echo PyInstaller ya esta instalado.
 )
 
 echo.
@@ -41,24 +49,8 @@ if exist "Paquete Distribucion" rmdir /s /q "Paquete Distribucion"
 if exist "Generador_Informe_Electrico.zip" del /q "Generador_Informe_Electrico.zip"
 
 echo.
-echo Paso 2: Construyendo ejecutable...
-python -m PyInstaller --name="Generador Informe Electrico" ^
-    --onefile ^
-    --windowed ^
-    --icon=NONE ^
-    --add-data "v1;v1" ^
-    --hidden-import=tkinter ^
-    --hidden-import=pandas ^
-    --hidden-import=openpyxl ^
-    --hidden-import=requests ^
-    --hidden-import=tqdm ^
-    --hidden-import=pathlib ^
-    --hidden-import=urllib.parse ^
-    --hidden-import=zipfile ^
-    --hidden-import=threading ^
-    --collect-all=pandas ^
-    --collect-all=openpyxl ^
-    -m app
+echo Paso 2: Construyendo ejecutable (esto puede tardar varios minutos)...
+python -m PyInstaller GeneradorInforme.spec --noconfirm
 
 if errorlevel 1 (
     echo.
@@ -69,36 +61,57 @@ if errorlevel 1 (
 
 echo.
 echo Paso 3: Creando carpeta de distribucion...
-mkdir "Paquete Distribucion"
+mkdir "Paquete Distribucion" 2>nul
 
 echo.
 echo Paso 4: Copiando archivos necesarios...
 copy "dist\Generador Informe Electrico.exe" "Paquete Distribucion\" >nul
+echo   [OK] Generador Informe Electrico.exe
+
 if exist "plantilla_base.xlsx" (
     copy "plantilla_base.xlsx" "Paquete Distribucion\" >nul
-    echo   [OK] plantilla_base.xlsx copiado
+    echo   [OK] plantilla_base.xlsx
 ) else (
-    echo   [ADVERTENCIA] plantilla_base.xlsx no encontrado
-)
-
-if exist "README_USUARIO_FINAL.txt" (
-    copy "README_USUARIO_FINAL.txt" "Paquete Distribucion\" >nul
-    echo   [OK] README_USUARIO_FINAL.txt copiado
-) else (
-    echo   [ADVERTENCIA] README_USUARIO_FINAL.txt no encontrado
-    echo   [INFO] Creando README basico...
-    echo Instrucciones de uso del Generador de Informe Electrico > "Paquete Distribucion\README_USUARIO_FINAL.txt"
-    echo. >> "Paquete Distribucion\README_USUARIO_FINAL.txt"
-    echo 1. Ejecute "Generador Informe Electrico.exe" >> "Paquete Distribucion\README_USUARIO_FINAL.txt"
-    echo 2. Complete los campos en la interfaz >> "Paquete Distribucion\README_USUARIO_FINAL.txt"
-    echo 3. Seleccione el rango de fechas >> "Paquete Distribucion\README_USUARIO_FINAL.txt"
-    echo 4. Haga clic en "Crear Informe" >> "Paquete Distribucion\README_USUARIO_FINAL.txt"
+    echo   [ADVERTENCIA] plantilla_base.xlsx no encontrado - el cliente debera tener su propia plantilla
 )
 
 echo.
-echo Paso 5: Creando archivo ZIP de distribucion...
+echo Creando README para el usuario final...
+(
+echo =====================================================
+echo   GENERADOR DE INFORME ELECTRICO - Instrucciones
+echo =====================================================
+echo.
+echo REQUISITOS DEL EQUIPO:
+echo   - Windows 10 o superior
+echo   - Microsoft Excel instalado ^(para escribir en la plantilla con maxima fidelidad^)
+echo   - Conexion a Internet ^(para descargar datos de PLABACOM^)
+echo.
+echo INSTRUCCIONES DE USO:
+echo.
+echo 1. Ejecute "Generador Informe Electrico.exe"
+echo 2. Seleccione Ano y Mes del informe
+echo 3. Complete Empresa, Barra y Nombre Medidor ^(si aplica^)
+echo 4. Seleccione la plantilla base del cliente
+echo 5. Elija la ruta de destino donde guardar el informe
+echo 6. Haga clic en "Crear Informe"
+echo.
+echo El programa descargara automaticamente los datos necesarios
+echo y generara el informe con los valores calculados.
+echo.
+echo BASE DE DATOS INTERNA:
+echo Los archivos descargados se almacenan en una carpeta interna del sistema
+echo ^(AppData\Local\GeneradorInformeElectrico^) y se van acumulando con el uso.
+echo Si un periodo ya fue descargado antes, no se vuelve a descargar.
+echo.
+echo NOTA: La primera ejecucion puede tardar unos segundos al iniciar.
+echo.
+) > "Paquete Distribucion\README.txt"
+
+echo.
+echo Paso 5: Creando archivo ZIP para distribucion...
 cd "Paquete Distribucion"
-powershell -Command "Compress-Archive -Path * -DestinationPath ..\Generador_Informe_Electrico.zip -Force"
+powershell -Command "Compress-Archive -Path * -DestinationPath '..\Generador_Informe_Electrico.zip' -Force"
 cd ..
 
 if exist "Generador_Informe_Electrico.zip" (
@@ -107,16 +120,17 @@ if exist "Generador_Informe_Electrico.zip" (
     echo Paquete creado exitosamente!
     echo ========================================
     echo.
-    echo Archivos creados:
-    echo   - Paquete Distribucion\ (carpeta completa)
-    echo   - Generador_Informe_Electrico.zip (archivo para distribuir)
+    echo Archivos generados:
+    echo   - Paquete Distribucion\ ^(carpeta con el ejecutable y documentos^)
+    echo   - Generador_Informe_Electrico.zip ^(archivo listo para entregar al cliente^)
     echo.
-    echo El paquete esta listo para entregar al usuario final.
-    echo.
+    echo Entregue el ZIP al cliente. Debe descomprimirlo y ejecutar
+    echo "Generador Informe Electrico.exe". Se requiere Excel instalado.
 ) else (
     echo.
     echo ERROR: No se pudo crear el archivo ZIP
     echo El paquete esta en la carpeta "Paquete Distribucion"
 )
 
+echo.
 pause

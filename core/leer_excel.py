@@ -291,6 +291,7 @@ def leer_total_ingresos_sscc(
     anyo: int,
     mes: int,
     nombre_empresa: str = "",
+    carpeta_base: str = "bd_data",
 ) -> Optional[float]:
     """
     Lee TOTAL INGRESOS POR SSCC CLP desde EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_.
@@ -300,7 +301,7 @@ def leer_total_ingresos_sscc(
     Returns:
         Valor en CLP, None si no se encuentra
     """
-    archivo = encontrar_archivo_cuadros_pago_sscc(anyo, mes)
+    archivo = encontrar_archivo_cuadros_pago_sscc(anyo, mes, carpeta_base)
     if archivo is None:
         print(f"[WARNING] No se encontró EXCEL 1_CUADROS_PAGO_SSCC para {mes}/{anyo}")
         return None
@@ -540,6 +541,7 @@ def leer_compra_venta_energia_gm_holdings(
     mes: int,
     nombre_empresa: str = "",
     nombre_barra: str = "",
+    carpeta_base: str = "bd_data",
 ) -> Optional[float]:
     """
     Lee Compra Venta Energia GM Holdings CLP desde Balance_25XXD, hoja Contratos,
@@ -551,7 +553,7 @@ def leer_compra_venta_energia_gm_holdings(
     Returns:
         Valor en CLP, None si no se encuentra
     """
-    archivo = encontrar_archivo_balance(anyo, mes)
+    archivo = encontrar_archivo_balance(anyo, mes, carpeta_base)
     if archivo is None:
         print(
             f"[WARNING] No se encontró Balance para leer Compra Venta GM Holdings {mes}/{anyo}"
@@ -1139,6 +1141,7 @@ def leer_total_ingresos_potencia_firme(
     anyo: int,
     mes: int,
     nombre_empresa: str = "",
+    carpeta_base: str = "bd_data",
 ) -> Optional[float]:
     """
     Lee el valor TOTAL INGRESOS POR POTENCIA FIRME CLP desde el Anexo 02.b
@@ -1149,11 +1152,12 @@ def leer_total_ingresos_potencia_firme(
         anyo: Año
         mes: Mes (1-12)
         nombre_empresa: Nombre de la empresa (ej: VIENTOS_DE_RENAICO). Si vacío, usa fallback.
+        carpeta_base: Carpeta base donde buscar (por defecto "bd_data")
 
     Returns:
         Valor en CLP, None si no se encuentra
     """
-    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes, carpeta_base)
     if archivo is None:
         print(f"[WARNING] No se encontró Anexo 02.b Potencia para {mes}/{anyo}")
         return None
@@ -1193,6 +1197,7 @@ def leer_ingresos_por_it(
     anyo: int,
     mes: int,
     nombre_empresa: str = "",
+    carpeta_base: str = "bd_data",
 ) -> Optional[float]:
     """
     Lee INGRESOS POR IT POTENCIA desde Anexo 02.b, hoja 02.IT/ASIGNACIÓN IT POTENCIA.
@@ -1204,7 +1209,7 @@ def leer_ingresos_por_it(
     Returns:
         Valor en CLP, None si no se encuentra
     """
-    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes, carpeta_base)
     if archivo is None:
         print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR IT POTENCIA {mes}/{anyo}")
         return None
@@ -1271,6 +1276,7 @@ def leer_ingresos_por_potencia(
     anyo: int,
     mes: int,
     nombre_empresa: str = "",
+    carpeta_base: str = "bd_data",
 ) -> Optional[float]:
     """
     Lee INGRESOS POR POTENCIA desde Anexo 02.b, hoja 01.BALANCE POTENCIA {Mes}-{YY} def.
@@ -1280,7 +1286,7 @@ def leer_ingresos_por_potencia(
     Returns:
         Valor en CLP, None si no se encuentra
     """
-    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes, carpeta_base)
     if archivo is None:
         print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR POTENCIA {mes}/{anyo}")
         return None

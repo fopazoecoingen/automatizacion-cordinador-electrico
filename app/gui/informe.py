@@ -1,9 +1,20 @@
 import json
+import os
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+def _directorio_base_datos() -> Path:
+    """
+    Directorio base. Ejecutable: carpeta del .exe (ahí se crea bd_data).
+    Desarrollo: carpeta actual.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
 
 from core.descargar_archivos import (
     buscar_archivo_existente_tipo,
@@ -82,7 +93,7 @@ class InterfazInforme:
 
     def _ruta_config(self) -> Path:
         """Ruta del archivo JSON con los últimos datos ingresados."""
-        return Path(__file__).resolve().parent.parent.parent / "config_ultimos_datos.json"
+        return _directorio_base_datos() / "config_ultimos_datos.json"
 
     def _guardar_ultimos_datos(
         self,
@@ -669,36 +680,22 @@ class InterfazInforme:
                 """Calcular el progreso global basado en el progreso de este mes."""
                 return progreso_base + int(porcentaje_mes * progreso_por_mes / 100)
 
-            # Paso 0: Validar estructura de carpetas (solo una vez)
+            # Base de datos interna: ruta absoluta en AppData (el ejecutable la encuentra siempre)
+            carpeta_bd = (_directorio_base_datos() / "bd_data").resolve()
+            carpeta_descomprimidos = carpeta_bd / "descomprimidos"
+
+            # Crear carpetas si no existen (necesario para que las descargas se guarden correctamente)
+            carpeta_bd.mkdir(parents=True, exist_ok=True)
+            carpeta_descomprimidos.mkdir(parents=True, exist_ok=True)
+
             if mes_actual == 1:
                 self.root.after(0, lambda: self.progress_var.set(calcular_progreso(2)))
                 self.root.after(
                     0,
                     lambda: self.progress_text_label.config(
-                        text="Validando estructura de carpetas..."
+                        text="✓ Base de datos interna lista"
                     ),
                 )
-
-                carpeta_bd = Path("bd_data")
-                carpeta_descomprimidos = carpeta_bd / "descomprimidos"
-
-                if not carpeta_bd.exists():
-                    carpeta_bd.mkdir(exist_ok=True)
-                    self.root.after(
-                        0,
-                        lambda: self.progress_text_label.config(
-                            text="✓ Carpeta 'bd_data' creada"
-                        ),
-                    )
-
-                if not carpeta_descomprimidos.exists():
-                    carpeta_descomprimidos.mkdir(parents=True, exist_ok=True)
-                    self.root.after(
-                        0,
-                        lambda: self.progress_text_label.config(
-                            text="✓ Carpeta 'descomprimidos' creada"
-                        ),
-                    )
 
             # Paso 1 y 2: Descargar/descomprimir cada tipo seleccionado (mismo proceso que ya existía)
             ruta_zip_energia = None  # Necesario para el informe
@@ -716,7 +713,9 @@ class InterfazInforme:
                     ),
                 )
 
-                archivo_existente = buscar_archivo_existente_tipo(anyo, mes, tipo)
+                archivo_existente = buscar_archivo_existente_tipo(
+                    anyo, mes, tipo, carpeta_zip=str(carpeta_bd)
+                )
                 if archivo_existente:
                     self.root.after(
                         0,
@@ -726,7 +725,9 @@ class InterfazInforme:
                     )
 
                 ruta_zip, ruta_descomprimida, codigo_error = descargar_y_descomprimir_zip_tipo(
-                    anyo, mes, tipo, descomprimir=True, mostrar_progreso=False
+                    anyo, mes, tipo,
+                    carpeta_zip=str(carpeta_bd),
+                    descomprimir=True, mostrar_progreso=False
                 )
 
                 if tipo == "energia_resultados":
@@ -796,7 +797,7 @@ class InterfazInforme:
                 ),
             )
 
-            lector = LectorBalance(anyo, mes)
+            lector = LectorBalance(anyo, mes, carpeta_base=str(carpeta_bd))
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(40)))
             self.root.after(
@@ -939,7 +940,7 @@ class InterfazInforme:
             # TOTAL INGRESOS POR POTENCIA FIRME CLP: leer desde Anexo 02.b Potencia
             # Tabla Datos: Empresa (B) | Potencia SEN (C) | TOTAL (D)
             total_monetario = leer_total_ingresos_potencia_firme(
-                anyo, mes, nombre_empresa=nombre_empresa
+                anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
             )
             if total_monetario is None:
                 # Fallback: usar suma monetario del Balance Valorizado
@@ -966,7 +967,9 @@ class InterfazInforme:
             )
 
             # INGRESOS POR IT POTENCIA: Anexo 02.b Potencia, hoja 02.IT POTENCIA {Mes}-{YY} def
-            total_it = leer_ingresos_por_it(anyo, mes, nombre_empresa=nombre_empresa)
+            total_it = leer_ingresos_por_it(
+                anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
+            )
             datos_encontrados["INGRESOS POR IT POTENCIA"] = total_it
             if total_it is not None:
                 escribir_total_en_resultado(
@@ -979,7 +982,7 @@ class InterfazInforme:
 
             # INGRESOS POR POTENCIA: Anexo 02.b Potencia, hoja 01.BALANCE POTENCIA {Mes}-{YY} def
             total_potencia = leer_ingresos_por_potencia(
-                anyo, mes, nombre_empresa=nombre_empresa
+                anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
             )
             datos_encontrados["INGRESOS POR POTENCIA"] = total_potencia
             if total_potencia is not None:
@@ -1014,7 +1017,10 @@ class InterfazInforme:
 
             # TOTAL INGRESOS POR SSCC CLP: EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_
             # Filtra por Nemotecnico Deudor = empresa, suma columna Monto
-            total_sscc = leer_total_ingresos_sscc(anyo, mes, nombre_empresa) if nombre_empresa else None
+            total_sscc = (
+                leer_total_ingresos_sscc(anyo, mes, nombre_empresa, carpeta_base=str(carpeta_bd))
+                if nombre_empresa else None
+            )
             datos_encontrados["TOTAL INGRESOS POR SSCC CLP"] = total_sscc
             if nombre_empresa and total_sscc is not None:
                 escribir_total_en_resultado(
@@ -1030,6 +1036,7 @@ class InterfazInforme:
                 anyo, mes,
                 nombre_empresa=nombre_empresa,
                 nombre_barra=nombre_barra,
+                carpeta_base=str(carpeta_bd),
             )
             datos_encontrados["Compra Venta Energia GM Holdings CLP"] = total_gm_holdings
             if total_gm_holdings is not None:
@@ -1118,18 +1125,28 @@ class InterfazInforme:
             return False
 
         except Exception as e:
-            print(f"[ERROR] Error procesando {nombre_mes} {anyo}: {str(e)}")
             import traceback
 
+            err_txt = str(e).strip() if str(e) else (repr(e) or type(e).__name__)
+            err_txt = (err_txt[:80] + "…") if len(err_txt) > 80 else err_txt
+            print(f"[ERROR] Error procesando {nombre_mes} {anyo}: {err_txt}")
             traceback.print_exc()
+
+            def _mostrar_error():
+                messagebox.showerror(
+                    "Error al procesar",
+                    f"Error al generar el informe para {nombre_mes} {anyo}:\n\n{err_txt}\n\n"
+                    "Verifique que Excel esté instalado y que las rutas de plantilla y destino sean correctas.",
+                    parent=self.root,
+                )
+
             self.root.after(
                 0,
-                lambda: self.progress_text_label.config(
-                    text=(
-                        f"[{mes_actual}/{total_meses}] ✗ Error: {str(e)[:50]}..."
-                    )
+                lambda ma=mes_actual, tm=total_meses, et=err_txt: self.progress_text_label.config(
+                    text=f"[{ma}/{tm}] ✗ Error: {et}"
                 ),
             )
+            self.root.after(50, lambda: _mostrar_error())
             return False
 
 

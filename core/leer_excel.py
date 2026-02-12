@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Union
 from datetime import datetime, date
 
-from core.descargar_archivos import meses
+from core.descargar_archivos import meses, meses_abrev
 
 
 def encontrar_archivo_balance(anyo: int, mes: int, carpeta_base: str = "bd_data") -> Optional[Path]:
@@ -178,7 +178,8 @@ def encontrar_archivo_cuadros_pago_sscc(
     carpeta_base: str = "bd_data",
 ) -> Optional[Path]:
     """
-    Encuentra EXCEL 1_CUADROS_PAGO_SSCC_{YYMM}_def.xlsx en la carpeta SSCC descomprimida.
+    Encuentra EXCEL 1_CUADROS_PAGO_SSCC_{YYMM}_def.xlsx en carpetas descomprimidas.
+    Busca en carpetas SSCC y en toda la carpeta descomprimidos.
 
     Returns:
         Path del archivo, None si no existe
@@ -189,24 +190,75 @@ def encontrar_archivo_cuadros_pago_sscc(
         return None
 
     yymm = f"{str(anyo)[-2:]}{str(mes).zfill(2)}"
+    # Patrones de nombre (PLABACOM puede usar distintas variantes)
+    mes_abrev = meses_abrev.get(mes, "??")
+    anyo_2 = str(anyo)[-2:]
     nombres = [
+        f"1_CUADROS_PAGO_SSCC_{yymm}_def.xlsx",
+        f"1_CUADROS_PAGO_SSCC_{yymm}_def.xlsb",
+        f"1_CUADROS_PAGO_SSCC_{yymm}_def.xlsm",
         f"EXCEL 1_CUADROS_PAGO_SSCC_{yymm}_def.xlsx",
         f"EXCEL 1_CUADROS_PAGO_SSCC_{yymm}_def.xlsb",
+        f"EXCEL 1_CUADROS_PAGO_SSCC_{yymm}_def.xlsm",
+        f"1_CUADROS_PAGO_SSCC_{anyo_2}{mes_abrev}_def.xlsx",
+        f"1_CUADROS_PAGO_SSCC_{anyo_2}{mes_abrev}_def.xlsb",
+        f"1_CUADROS_PAGO_SSCC_{anyo_2}{mes_abrev}_def.xlsm",
+        f"Cuadros de Pago_SSCC_{mes_abrev}{anyo_2}_def.xlsx",
+        f"Cuadros de Pago_SSCC_{mes_abrev}{anyo_2}_def.xlsb",
+        f"Cuadros de Pago_SSCC_{yymm}.xlsx",
+        f"Cuadros de Pago_SSCC_{yymm}.xlsb",
     ]
 
-    carpeta_descomprimidos = Path(carpeta_base) / "descomprimidos"
+    carpeta_base_path = Path(carpeta_base)
+    carpeta_descomprimidos = carpeta_base_path / "descomprimidos"
+
+    # 1) Buscar en bd_data/sscc (carpeta manual) y en bd_data raíz
+    for carpeta_extra in [carpeta_base_path / "sscc", carpeta_base_path]:
+        if carpeta_extra.exists():
+            for nombre in nombres:
+                archivo = carpeta_extra / nombre
+                if archivo.exists():
+                    return archivo
+            for archivo in carpeta_extra.rglob("*"):
+                if archivo.is_file() and archivo.suffix.lower() in (".xlsx", ".xlsb", ".xlsm"):
+                    if "CUADROS_PAGO_SSCC" in archivo.name.upper() and yymm in archivo.name:
+                        return archivo
+
     if not carpeta_descomprimidos.exists():
         return None
 
+    # 2) Buscar por nombre exacto y por patrón en descomprimidos
+    # Prioridad: PLABACOM_..._SSCC_Balance_SSCC_... (ej: PLABACOM_2025_12_Diciembre_SSCC_Balance_SSCC_2025_dic_def)
     for carpeta in carpeta_descomprimidos.iterdir():
         if carpeta.is_dir() and "SSCC" in carpeta.name:
             for nombre in nombres:
                 archivo = carpeta / nombre
                 if archivo.exists():
                     return archivo
-            for archivo in carpeta.rglob("EXCEL 1_CUADROS_PAGO_SSCC*"):
-                if archivo.suffix.lower() in (".xlsx", ".xlsb"):
-                    return archivo
+            for archivo in carpeta.rglob("*"):
+                if archivo.is_file() and archivo.suffix.lower() in (".xlsx", ".xlsb", ".xlsm"):
+                    name_upper = archivo.name.upper()
+                    name_lower = archivo.name.lower()
+                    # Cuadros de Pago SSCC (variantes: 1_CUADROS_PAGO_SSCC, Cuadros de Pago_SSCC, etc.)
+                    tiene_sscc_pago = (
+                        ("PAGO" in name_upper and "SSCC" in name_upper)
+                        or ("CUADROS" in name_upper and "SSCC" in name_upper)
+                        or "cuadros_pago_sscc" in name_lower
+                    )
+                    # Período: 2512, dic25, dic, etc.
+                    tiene_periodo = (
+                        yymm in archivo.name
+                        or f"{mes_abrev}{anyo_2}" in name_lower
+                        or f"{anyo_2}{mes_abrev}" in name_lower
+                    )
+                    if tiene_sscc_pago and tiene_periodo:
+                        return archivo
+
+    # Búsqueda amplia
+    for archivo in carpeta_descomprimidos.rglob("*"):
+        if archivo.is_file() and archivo.suffix.lower() in (".xlsx", ".xlsb", ".xlsm"):
+            if "CUADROS_PAGO_SSCC" in archivo.name.upper() and yymm in archivo.name:
+                return archivo
     return None
 
 
@@ -218,6 +270,7 @@ def leer_total_ingresos_sscc(
     """
     Lee TOTAL INGRESOS POR SSCC CLP desde EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_.
     Filtra por Nemotecnico Deudor = nombre_empresa y suma columna Monto.
+    Busca el archivo automáticamente en bd_data/descomprimidos.
 
     Returns:
         Valor en CLP, None si no se encuentra
@@ -227,43 +280,70 @@ def leer_total_ingresos_sscc(
         print(f"[WARNING] No se encontró EXCEL 1_CUADROS_PAGO_SSCC para {mes}/{anyo}")
         return None
 
-    nombre_empresa_upper = nombre_empresa.strip().upper() if nombre_empresa else ""
-    if not nombre_empresa_upper:
-        print("[WARNING] nombre_empresa vacío para TOTAL INGRESOS POR SSCC")
+    nombre_empresa_norm = (
+        nombre_empresa.strip().upper().replace(" ", "_") if nombre_empresa else ""
+    )
+    if not nombre_empresa_norm:
+        print("[WARNING] TOTAL INGRESOS POR SSCC: ingrese Empresa para filtrar por Nemotecnico Deudor")
         return None
 
     try:
-        kw = {"sheet_name": "CPI_", "header": 0}
+        # CPI_ tiene encabezados en fila 5 (antes hay metadata: Coordinador, Concepto, etc.)
+        kw = {"sheet_name": "CPI_", "header": None}
         if archivo.suffix.lower() == ".xlsb":
             kw["engine"] = "pyxlsb"
-        df = pd.read_excel(archivo, **kw)
+        df_raw = pd.read_excel(archivo, **kw)
     except Exception as e:
         print(f"[WARNING] Error leyendo CPI_: {e}")
         return None
 
-    # Buscar columna Nemotecnico Deudor (puede tener variaciones de nombre)
-    col_deudor = None
-    col_monto = None
-    for c in df.columns:
-        c_lower = str(c).lower().replace("ó", "o").replace("í", "i")
-        if "nemotecnico" in c_lower and "deudor" in c_lower:
-            col_deudor = c
-        elif "monto" in c_lower:
-            col_monto = c
+    # Buscar fila de encabezados (contiene "Nemotecnico Deudor" y "Monto")
+    fila_header = None
+    for i in range(min(15, len(df_raw))):
+        fila_str = " ".join(str(v) for v in df_raw.iloc[i].values if pd.notna(v)).lower()
+        fila_str = fila_str.replace("ó", "o").replace("í", "i")
+        if "nemotecnico" in fila_str and "deudor" in fila_str and "monto" in fila_str:
+            fila_header = i
+            break
 
-    if col_deudor is None or col_monto is None:
+    if fila_header is None:
+        print(f"[WARNING] No se encontró fila de encabezados (Nemotecnico Deudor, Monto) en CPI_")
+        return None
+
+    df = df_raw.iloc[fila_header + 1 :].copy()
+    headers = df_raw.iloc[fila_header].values
+
+    # Buscar índice de columna (por posición); col 12 repite headers concatenados → evita duplicados
+    idx_deudor = None
+    idx_monto = None
+    for idx, val in enumerate(headers):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            continue
+        if idx >= 10:  # Columnas 0-6 son datos; 7+ suele ser metadata o duplicado
+            break
+        c_lower = str(val).lower().replace("ó", "o").replace("í", "i")
+        if "nemotecnico" in c_lower and "deudor" in c_lower and idx_deudor is None:
+            idx_deudor = idx
+        elif "monto" in c_lower and "retencion" not in c_lower and idx_monto is None:
+            idx_monto = idx
+
+    if idx_deudor is None or idx_monto is None:
         print(f"[WARNING] No se encontraron columnas Nemotecnico Deudor o Monto en CPI_")
         return None
 
-    df_filtrado = df[
-        df[col_deudor].astype(str).str.strip().str.upper() == nombre_empresa_upper
-    ]
-    total = df_filtrado[col_monto].apply(
+    # Usar iloc para evitar duplicados de nombres
+    def _norm_empresa(s):
+        return str(s).strip().upper().replace(" ", "_")
+
+    col_deudor_vals = df.iloc[:, idx_deudor].apply(lambda x: _norm_empresa(x))
+    mask = col_deudor_vals == nombre_empresa_norm
+    df_filtrado = df.loc[mask]
+    total = df_filtrado.iloc[:, idx_monto].apply(
         lambda v: _parsear_valor_monetario(v) or 0
     ).sum()
 
     print(
-        f"[INFO] Leyendo TOTAL INGRESOS POR SSCC CLP desde: {archivo.name} (hoja CPI_)"
+        f"[INFO] Leyendo TOTAL INGRESOS POR SSCC CLP desde: {archivo.name} (hoja CPI_, Nemotecnico Deudor)"
     )
     print(f"  -> Dato obtenido ({nombre_empresa}, Monto): {total:,.2f}")
     return float(total)

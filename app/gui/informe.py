@@ -153,8 +153,8 @@ class InterfazInforme:
         config_frame = tk.Frame(self.main_panel, bg="white")
         config_frame.pack(fill=tk.X, padx=30, pady=20)
 
-        labels = ["Empresa", "Barra"]
-        default_values = ["VIENTOS_DE_RENAICO", ""]
+        labels = ["Empresa", "Barra", "Nombre Medidor"]
+        default_values = ["VIENTOS_DE_RENAICO", "", ""]
 
         self.entries = {}
 
@@ -177,19 +177,19 @@ class InterfazInforme:
             self.entries[label] = entry
 
         # Configurar pesos de columnas
-        for i in range(2):
+        for i in range(3):
             config_frame.grid_columnconfigure(i, weight=1)
 
-        # Nota sobre barra
+        # Nota sobre filtros
         nota_label = tk.Label(
             config_frame,
-            text="Nota: Deje 'Barra' vacío para procesar todas las barras",
+            text="Nota: Barra vacío = todas. Nombre Medidor aplica solo a IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP.",
             bg="white",
             font=("Arial", 8),
             fg="#666666",
             anchor="w",
         )
-        nota_label.grid(row=2, column=0, columnspan=2, padx=10, pady=(5, 0), sticky="w")
+        nota_label.grid(row=2, column=0, columnspan=3, padx=10, pady=(5, 0), sticky="w")
 
     def create_file_section(self) -> None:
         """Crear sección de selección de archivos (plantilla y archivo de salida)."""
@@ -410,6 +410,7 @@ class InterfazInforme:
 
         nombre_barra = self.entries["Barra"].get().strip()
         nombre_empresa = self.entries["Empresa"].get().strip()
+        nombre_medidor = self.entries["Nombre Medidor"].get().strip()
 
         # Iniciar proceso en hilo separado
         self.procesando = True
@@ -426,6 +427,7 @@ class InterfazInforme:
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
+                nombre_medidor,
                 tipos_a_descargar,
             ),
             daemon=True,
@@ -440,6 +442,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
+        nombre_medidor: str,
         tipos_seleccionados: list,
     ) -> None:
         """Procesar el informe en un hilo separado para un mes específico."""
@@ -459,6 +462,7 @@ class InterfazInforme:
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
+                nombre_medidor,
                 tipos_seleccionados,
                 1,
                 1,
@@ -480,7 +484,9 @@ class InterfazInforme:
                 mensaje += f"Empresa: {nombre_empresa}\n"
             if nombre_barra:
                 mensaje += f"Barra: {nombre_barra}\n"
-            if not nombre_barra and not nombre_empresa:
+            if nombre_medidor:
+                mensaje += f"Nombre Medidor: {nombre_medidor}\n"
+            if not nombre_barra and not nombre_empresa and not nombre_medidor:
                 mensaje += "Barras: Todas (agrupadas)\n"
             mensaje += f"Archivo: {ruta_destino}"
 
@@ -509,6 +515,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
+        nombre_medidor: str,
         tipos_seleccionados: list,
         mes_actual: int,
         total_meses: int,
@@ -682,6 +689,7 @@ class InterfazInforme:
             columna_monetario = None
             columna_empresa = None
             columna_fisico_kwh = None
+            columna_nombre_medidor = None
 
             for col in df_balance.columns:
                 col_lower = str(col).lower().replace(" ", "_")
@@ -693,6 +701,8 @@ class InterfazInforme:
                     columna_empresa = col
                 elif "fisico" in col_lower and "kwh" in col_lower:
                     columna_fisico_kwh = col
+                elif "nombre_medidor" in col_lower or "nombre medidor" in str(col).lower():
+                    columna_nombre_medidor = col
 
             # monetario: necesario para TOTAL INGRESOS POR ENERGIA CLP y fallback de POTENCIA FIRME
             if columna_monetario is None:
@@ -745,6 +755,27 @@ class InterfazInforme:
                         )
                     ),
                 )
+
+            # Para IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP: aplicar filtro nombre_medidor
+            df_para_energia_importacion = df_guardar.copy()
+            if nombre_medidor:
+                if columna_nombre_medidor is None:
+                    print("[WARNING] Nombre Medidor especificado pero no se encontró columna 'nombre_medidor' en Balance Valorizado")
+                else:
+                    df_para_energia_importacion = df_para_energia_importacion[
+                        df_para_energia_importacion[columna_nombre_medidor]
+                        .astype(str).str.strip().str.upper()
+                        == nombre_medidor.strip().upper()
+                    ]
+                    self.root.after(
+                        0,
+                        lambda: self.progress_text_label.config(
+                            text=(
+                                f"[{mes_actual}/{total_meses}] Filtrando por nombre_medidor: "
+                                f"{nombre_medidor}..."
+                            )
+                        ),
+                    )
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
 
@@ -807,9 +838,10 @@ class InterfazInforme:
                 )
 
             # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
+            # Usa filtro nombre_medidor si aplica
             if columna_monetario is not None:
                 total_energia = (
-                    df_guardar[columna_monetario].dropna().astype(float).sum()
+                    df_para_energia_importacion[columna_monetario].dropna().astype(float).sum()
                 )
                 datos_encontrados["TOTAL INGRESOS POR ENERGIA CLP"] = total_energia
                 print(
@@ -856,10 +888,11 @@ class InterfazInforme:
                 )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
+            # Usa filtro nombre_medidor si aplica
             importacion_mwh = None
             if columna_fisico_kwh is not None:
                 total_fisico_kwh = (
-                    df_guardar[columna_fisico_kwh].dropna().astype(float).sum()
+                    df_para_energia_importacion[columna_fisico_kwh].dropna().astype(float).sum()
                 )
                 importacion_mwh = abs(total_fisico_kwh) / 1000.0
                 print(

@@ -36,11 +36,12 @@ def encontrar_archivo_balance(anyo: int, mes: int, carpeta_base: str = "bd_data"
     anyo_abrev = str(anyo)[-2:]
     mes_str = str(mes).zfill(2)
 
-    # Construir nombre del archivo: Balance_2512D.xlsm (formato: Balance_YYMMD.xlsm)
-    nombre_archivo = f"Balance_{anyo_abrev}{mes_str}D.xlsm"
+    # Construir nombres del archivo: Balance_2512D.xlsm o .xlsx (formato: Balance_YYMMD.xlsm)
+    nombre_base = f"Balance_{anyo_abrev}{mes_str}D"
+    nombres_archivo = [f"{nombre_base}.xlsm", f"{nombre_base}.xlsx"]
 
     print(f"[INFO] Buscando archivo Balance para {mes}/{anyo}")
-    print(f"  Nombre esperado: {nombre_archivo}")
+    print(f"  Nombres esperados: {', '.join(nombres_archivo)}")
     print(f"  Año abreviado: {anyo_abrev}, Mes: {mes_str}")
 
     # Buscar en la carpeta descomprimidos
@@ -59,15 +60,16 @@ def encontrar_archivo_balance(anyo: int, mes: int, carpeta_base: str = "bd_data"
     print(f"  Carpetas encontradas con el patrón: {len(carpetas_encontradas)}")
 
     for carpeta in carpetas_encontradas:
-        archivo_balance = carpeta / nombre_archivo
-        if archivo_balance.exists():
-            print(f"[OK] Archivo Balance encontrado: {archivo_balance}")
-            print(f"  Ruta completa: {archivo_balance.absolute()}")
-            return archivo_balance
-        else:
-            # Buscar también en subcarpetas (por si hay estructura anidada)
-            for subcarpeta in carpeta.rglob("*"):
-                if subcarpeta.is_dir():
+        for nombre_archivo in nombres_archivo:
+            archivo_balance = carpeta / nombre_archivo
+            if archivo_balance.exists():
+                print(f"[OK] Archivo Balance encontrado: {archivo_balance}")
+                print(f"  Ruta completa: {archivo_balance.absolute()}")
+                return archivo_balance
+        # Buscar también en subcarpetas (por si hay estructura anidada)
+        for subcarpeta in carpeta.rglob("*"):
+            if subcarpeta.is_dir():
+                for nombre_archivo in nombres_archivo:
                     archivo_balance = subcarpeta / nombre_archivo
                     if archivo_balance.exists():
                         print(f"[OK] Archivo Balance encontrado en subcarpeta: {archivo_balance}")
@@ -78,26 +80,29 @@ def encontrar_archivo_balance(anyo: int, mes: int, carpeta_base: str = "bd_data"
     print(f"  Realizando búsqueda amplia en todas las carpetas...")
     for carpeta in carpeta_descomprimidos.iterdir():
         if carpeta.is_dir():
-            # Buscar directamente en la carpeta
-            archivo_balance = carpeta / nombre_archivo
-            if archivo_balance.exists():
-                print(f"[OK] Archivo Balance encontrado: {archivo_balance}")
-                print(f"  Ruta completa: {archivo_balance.absolute()}")
-                return archivo_balance
+            for nombre_archivo in nombres_archivo:
+                archivo_balance = carpeta / nombre_archivo
+                if archivo_balance.exists():
+                    print(f"[OK] Archivo Balance encontrado: {archivo_balance}")
+                    print(f"  Ruta completa: {archivo_balance.absolute()}")
+                    return archivo_balance
 
             # Buscar en subcarpetas
-            for archivo in carpeta.rglob(nombre_archivo):
-                if archivo.is_file():
-                    print(f"[OK] Archivo Balance encontrado: {archivo}")
-                    print(f"  Ruta completa: {archivo.absolute()}")
-                    return archivo
+            for nombre_archivo in nombres_archivo:
+                for archivo in carpeta.rglob(nombre_archivo):
+                    if archivo.is_file():
+                        print(f"[OK] Archivo Balance encontrado: {archivo}")
+                        print(f"  Ruta completa: {archivo.absolute()}")
+                        return archivo
 
     # Listar archivos Balance disponibles para ayudar al usuario
-    print(f"[ERROR] No se encontró el archivo Balance: {nombre_archivo}")
+    print(f"[ERROR] No se encontró el archivo Balance: {nombre_base}.xlsm ni .xlsx")
     print(f"  Buscado en: {carpeta_descomprimidos.absolute()}")
 
     # Mostrar archivos Balance disponibles
-    archivos_balance = list(carpeta_descomprimidos.rglob("Balance_*.xlsm"))
+    archivos_balance = list(carpeta_descomprimidos.rglob("Balance_*.xlsm")) + list(
+        carpeta_descomprimidos.rglob("Balance_*.xlsx")
+    )
     if archivos_balance:
         print(f"  Archivos Balance disponibles:")
         for archivo in archivos_balance[:5]:  # Mostrar máximo 5
@@ -349,6 +354,167 @@ def leer_total_ingresos_sscc(
     return float(total)
 
 
+def _normalizar_texto(s: str) -> str:
+    """Normaliza texto para búsqueda: minúsculas, sin acentos."""
+    if not s or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    s = str(s).strip().lower()
+    for old, new in [("í", "i"), ("ó", "o"), ("á", "a"), ("é", "e"), ("ú", "u"), ("ñ", "n")]:
+        s = s.replace(old, new)
+    return s
+
+
+def _tiene_nombre_corto_empresa(n: str) -> bool:
+    """Detecta si el texto corresponde a la columna nombre_corto_empresa."""
+    if not n:
+        return False
+    return (
+        ("nombre_corto" in n and "empresa" in n)
+        or ("nombre" in n and "corto" in n and "empresa" in n)
+    )
+
+
+def _encontrar_seccion_fisicos_contratos(df_raw: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """
+    Localiza la sección 'Resumen Contratos Generadores Físicos' en la hoja Contratos
+    y devuelve un DataFrame solo con esa tabla (excluyendo Generadores Financieros).
+
+    La hoja puede tener dos tablas: Físicos (cols A-H) y Financieros (cols K-R).
+    Solo se usa la sección Físicos.
+    """
+    # Patrones: debe contener "generadores" + "fisicos", NO "financieros"
+    def _es_fisicos(s: str) -> bool:
+        if s is None or (isinstance(s, float) and pd.isna(s)):
+            return False
+        n = _normalizar_texto(str(s))
+        if "financieros" in n:
+            return False
+        # Aceptar "físicos" o "fisicos" (por variantes Unicode)
+        tiene_fisicos = "fisicos" in n or "físicos" in str(s).lower()
+        return "generadores" in n and tiene_fisicos
+
+    # Búsqueda más amplia (hasta 50 filas)
+    for row_idx in range(min(50, len(df_raw))):
+        for col_idx in range(min(20, df_raw.shape[1])):
+            val = df_raw.iloc[row_idx, col_idx]
+            if pd.isna(val):
+                continue
+            if not _es_fisicos(str(val)):
+                continue
+            # Encontramos Físicos. Buscar fila de encabezados en las siguientes filas
+            # (puede estar en row_idx+1, row_idx+2, row_idx+3, etc.)
+            start_col = col_idx
+            end_col = min(col_idx + 8, df_raw.shape[1])
+
+            for offset in range(1, 8):  # Buscar hasta 7 filas más abajo
+                header_row = row_idx + offset
+                if header_row >= len(df_raw):
+                    break
+                headers = df_raw.iloc[header_row, start_col:end_col].values
+                has_nombre_corto = any(
+                    _tiene_nombre_corto_empresa(_normalizar_texto(str(h) if pd.notna(h) else ""))
+                    for h in headers if pd.notna(h) and str(h).strip()
+                )
+                has_venta_clp = any(
+                    "venta" in _normalizar_texto(str(h)) and "clp" in _normalizar_texto(str(h))
+                    for h in headers if pd.notna(h)
+                )
+                if has_nombre_corto and has_venta_clp:
+                    data_start = header_row + 1
+                    df_block = df_raw.iloc[data_start:, start_col:end_col].copy()
+                    df_block.columns = [str(h).strip() if pd.notna(h) else f"col_{i}" for i, h in enumerate(headers)]
+                    df_block = df_block.replace("", pd.NA)
+                    mask_total = df_block.iloc[:, 0].astype(str).str.strip().str.upper() == "TOTAL"
+                    df_block = df_block[~mask_total].dropna(how="all")
+                    return df_block
+
+    # Fallback 1: si A1 contiene el título Físicos, asumir estructura estándar (cols 0-7)
+    if len(df_raw) >= 3 and df_raw.shape[1] >= 8:
+        a1 = str(df_raw.iloc[0, 0] or "").strip().lower()
+        if "resumen" in a1 and "contratos" in a1 and "generadores" in a1 and ("fisicos" in a1 or "físicos" in a1):
+            if "financieros" not in a1:
+                for header_row in range(1, min(8, len(df_raw))):
+                    headers = df_raw.iloc[header_row, 0:8].values
+                    if _tiene_nombre_corto_empresa(" ".join(_normalizar_texto(str(h)) for h in headers if pd.notna(h))):
+                        if any("venta" in _normalizar_texto(str(h)) and "clp" in _normalizar_texto(str(h)) for h in headers if pd.notna(h)):
+                            df_block = df_raw.iloc[header_row + 1 :, 0:8].copy()
+                            df_block.columns = [str(h).strip() if pd.notna(h) else f"col_{i}" for i, h in enumerate(headers)]
+                            df_block = df_block.replace("", pd.NA)
+                            mask_total = df_block.iloc[:, 0].astype(str).str.strip().str.upper() == "TOTAL"
+                            df_block = df_block[~mask_total].dropna(how="all")
+                            return df_block
+
+    # Fallback 2: buscar fila de encabezados con nombre_corto_empresa y VENTA CLP
+    # en las primeras 8 columnas (bloque Físicos, ya que Financieros suele estar en col K+)
+    for row_idx in range(min(30, len(df_raw))):
+        row_vals = df_raw.iloc[row_idx, : min(10, df_raw.shape[1])].values
+        has_nombre_corto = any(
+            _tiene_nombre_corto_empresa(_normalizar_texto(str(h) if pd.notna(h) else ""))
+            for h in row_vals if pd.notna(h) and str(h).strip()
+        )
+        has_venta_clp = any(
+            "venta" in _normalizar_texto(str(h)) and "clp" in _normalizar_texto(str(h))
+            for h in row_vals if pd.notna(h)
+        )
+        # Que la columna 0 NO sea de Financieros (que suele empezar en K)
+        first_cell = _normalizar_texto(row_vals[0]) if len(row_vals) > 0 else ""
+        if "financieros" in first_cell:
+            continue
+        if has_nombre_corto and has_venta_clp:
+            start_col = 0
+            end_col = min(8, df_raw.shape[1])
+            headers = df_raw.iloc[row_idx, start_col:end_col].values
+            data_start = row_idx + 1
+            df_block = df_raw.iloc[data_start:, start_col:end_col].copy()
+            df_block.columns = [str(h).strip() if pd.notna(h) else f"col_{i}" for i, h in enumerate(headers)]
+            df_block = df_block.replace("", pd.NA)
+            mask_total = df_block.iloc[:, 0].astype(str).str.strip().str.upper() == "TOTAL"
+            df_block = df_block[~mask_total].dropna(how="all")
+            return df_block
+
+    # Diagnóstico: mostrar qué hay en las primeras celdas
+    print(f"[DEBUG] No se encontró 'Resumen Contratos Generadores Físicos'. Primeras celdas (5x5):")
+    for r in range(min(5, len(df_raw))):
+        vals = [str(df_raw.iloc[r, c])[:40] for c in range(min(5, df_raw.shape[1]))]
+        print(f"  Fila {r}: {vals}")
+    return None
+
+
+def _leer_contratos_raw_openpyxl(ruta: Path) -> Optional[pd.DataFrame]:
+    """
+    Lee la hoja Contratos usando openpyxl para evitar problemas con .xlsm.
+    Devuelve DataFrame con header=None (valores crudos).
+    """
+    try:
+        wb = load_workbook(str(ruta), read_only=True, data_only=True)
+        ws = None
+        if "Contratos" in wb.sheetnames:
+            ws = wb["Contratos"]
+        else:
+            for name in wb.sheetnames:
+                if "contrato" in name.lower():
+                    ws = wb[name]
+                    break
+        if ws is None:
+            wb.close()
+            return None
+        rows = []
+        for row in ws.iter_rows(max_row=200, max_col=25, values_only=True):
+            rows.append(list(row) if row else [])
+        wb.close()
+        if not rows:
+            return None
+        # Rellenar filas para que todas tengan el mismo número de columnas
+        max_cols = max(len(r) for r in rows)
+        for r in rows:
+            while len(r) < max_cols:
+                r.append(None)
+        return pd.DataFrame(rows)
+    except Exception as e:
+        print(f"[WARNING] openpyxl leyendo Contratos: {e}")
+        return None
+
+
 def leer_compra_venta_energia_gm_holdings(
     anyo: int,
     mes: int,
@@ -357,7 +523,10 @@ def leer_compra_venta_energia_gm_holdings(
 ) -> Optional[float]:
     """
     Lee Compra Venta Energia GM Holdings CLP desde Balance_25XXD, hoja Contratos,
-    columna Total CLP. Opcionalmente filtra por empresa/barra si existen esas columnas.
+    columna VENTA[CLP], filtrando por nombre_corto_empresa.
+
+    Solo considera la sección 'Resumen Contratos Generadores Físicos'
+    (excluye Resumen Contratos Generadores Financieros).
 
     Returns:
         Valor en CLP, None si no se encuentra
@@ -369,47 +538,49 @@ def leer_compra_venta_energia_gm_holdings(
         )
         return None
 
-    try:
-        df = pd.read_excel(archivo, sheet_name="Contratos", header=0)
-    except Exception as e:
-        print(f"[WARNING] Error leyendo hoja Contratos: {e}")
+    df_raw = _leer_contratos_raw_openpyxl(archivo)
+    if df_raw is None:
+        try:
+            df_raw = pd.read_excel(archivo, sheet_name="Contratos", header=None, engine="openpyxl")
+        except Exception as e:
+            print(f"[WARNING] Error leyendo hoja Contratos: {e}")
+            return None
+
+    df = _encontrar_seccion_fisicos_contratos(df_raw)
+    if df is None:
+        print(f"[WARNING] No se encontró sección 'Resumen Contratos Generadores Físicos' en Contratos")
         return None
 
-    # Patrones de columna para Total/Venta CLP (ordenados por preferencia)
-    _patrones_clp = [
-        lambda x: "total" in x and "clp" in x,
-        lambda x: "venta" in x and "clp" in x,
-        lambda x: "venta[clp]" in x or "venta (clp)" in x,
-        lambda x: "monto" in x and "clp" in x,
-        lambda x: x.strip().lower() == "total clp",
-        lambda x: x.strip().lower() == "clp",
-    ]
-    col_total = None
+    # Buscar columna nombre_corto_empresa para filtrar
+    col_empresa = None
+    for c in df.columns:
+        if "nombre_corto" in str(c).lower() and "empresa" in str(c).lower():
+            col_empresa = c
+            break
+    if col_empresa is None:
+        print(f"[WARNING] No se encontró columna nombre_corto_empresa en Resumen Contratos Generadores Físicos")
+        return None
+
+    # Buscar columna VENTA[CLP]
+    col_venta_clp = None
     for c in df.columns:
         c_lower = str(c).strip().lower()
-        for pred in _patrones_clp:
-            if pred(c_lower):
-                col_total = c
-                break
-        if col_total is not None:
+        if "venta" in c_lower and "clp" in c_lower:
+            col_venta_clp = c
             break
-    if col_total is None:
-        print(f"[WARNING] No se encontró columna Total CLP en Contratos")
-        print(f"  Columnas disponibles: {list(df.columns)}")
+    if col_venta_clp is None:
+        print(f"[WARNING] No se encontró columna VENTA[CLP] en Resumen Contratos Generadores Físicos")
+        print(f"  Columnas: {list(df.columns)}")
         return None
 
     df_guardar = df.copy()
     if nombre_empresa:
-        for c in df.columns:
-            c_lower = str(c).lower()
-            if "empresa" in c_lower or "nombre_corto" in c_lower or "nemotecnico" in c_lower:
-                df_guardar = df_guardar[
-                    df_guardar[c].astype(str).str.strip().str.upper()
-                    == nombre_empresa.strip().upper()
-                ]
-                break
+        df_guardar = df_guardar[
+            df_guardar[col_empresa].astype(str).str.strip().str.upper()
+            == nombre_empresa.strip().upper()
+        ]
     if nombre_barra:
-        for c in df.columns:
+        for c in df_guardar.columns:
             if "barra" in str(c).lower():
                 df_guardar = df_guardar[
                     df_guardar[c].astype(str).str.strip().str.upper()
@@ -417,14 +588,15 @@ def leer_compra_venta_energia_gm_holdings(
                 ]
                 break
 
-    total = df_guardar[col_total].apply(
+    total = df_guardar[col_venta_clp].apply(
         lambda v: _parsear_valor_monetario(v) or 0
     ).sum()
 
     print(
-        f"[INFO] Leyendo Compra Venta Energia GM Holdings CLP desde: {archivo.name} (hoja Contratos)"
+        f"[INFO] Leyendo Compra Venta Energia GM Holdings CLP desde: {archivo.name} (hoja Contratos, "
+        "Resumen Contratos Generadores Físicos)"
     )
-    print(f"  -> Dato obtenido (Total CLP): {total:,.2f}")
+    print(f"  -> Dato obtenido (VENTA[CLP]): {total:,.2f}")
     return float(total)
 
 

@@ -461,13 +461,14 @@ def _leer_valor_por_empresa_y_columna(
                 return None
             df_raw = pd.read_excel(ruta, sheet_name=hoja, header=None)
 
-        # Buscar fila donde la PRIMERA celda sea "USUARIOS" (evitar "Nota: Usuarios Pagan")
+        # Buscar fila donde la PRIMERA celda sea "USUARIOS" o "EMPRESA" (evitar "Nota: Usuarios Pagan")
         header_row = None
+        primeras_validas = ("USUARIOS", "EMPRESA")
         for i in range(min(20, len(df_raw))):
             first_cell = df_raw.iloc[i].iloc[0] if len(df_raw.columns) > 0 else None
             if first_cell is not None and not pd.isna(first_cell):
                 first_str = str(first_cell).strip().upper()
-                if first_str == "USUARIOS" or first_str.startswith("USUARIOS"):
+                if first_str in primeras_validas or first_str.startswith("USUARIOS"):
                     header_row = i
                     break
 
@@ -475,14 +476,14 @@ def _leer_valor_por_empresa_y_columna(
             for i in range(min(20, len(df_raw))):
                 for j in range(min(3, len(df_raw.columns))):
                     cell = df_raw.iloc[i].iloc[j] if j < len(df_raw.iloc[i]) else None
-                    if cell is not None and str(cell).strip().upper() == "USUARIOS":
+                    if cell is not None and str(cell).strip().upper() in primeras_validas:
                         header_row = i
                         break
                 if header_row is not None:
                     break
 
         if header_row is None:
-            print("[DEBUG] IT POTENCIA: No se encontró fila de encabezados con USUARIOS")
+            print("[DEBUG] No se encontró fila de encabezados con USUARIOS/Empresa")
             return None
 
         df = df_raw.iloc[header_row:].copy()
@@ -522,12 +523,14 @@ def _leer_valor_por_empresa_y_columna(
                     col_target = c
                     break
         if col_target is None:
-            print(f"[DEBUG] IT POTENCIA: No se encontró columna '{col_valor}'. Primeras columnas: {list(df.columns)[:5]}... últimas: {list(df.columns)[-3:]}")
+            print(f"[DEBUG] No se encontró columna '{col_valor}'. Primeras: {list(df.columns)[:5]}... últimas: {list(df.columns)[-3:]}")
             return None
 
         for idx, row in df.iterrows():
             celda = row.get(col_empresa)
-            if celda is None or pd.isna(celda):
+            if isinstance(celda, pd.Series):
+                celda = celda.dropna().iloc[0] if len(celda.dropna()) > 0 else None
+            if celda is None or (isinstance(celda, float) and pd.isna(celda)):
                 continue
             celda_norm = str(celda).strip().replace(" ", "_").upper()
             if (
@@ -537,15 +540,17 @@ def _leer_valor_por_empresa_y_columna(
                 or celda_norm.startswith(emp_norm)
             ):
                 val = row.get(col_target)
+                if isinstance(val, pd.Series):
+                    val = val.dropna().iloc[0] if len(val.dropna()) > 0 else None
                 parsed = _parsear_valor_monetario(val)
                 if parsed is not None:
                     return parsed
 
-        print(f"[DEBUG] IT POTENCIA: No se encontró fila para '{nombre_empresa}' en col '{col_empresa}'. "
+        print(f"[DEBUG] No se encontró fila para '{nombre_empresa}' en col '{col_empresa}'. "
               f"Columnas: {list(df.columns)[:8]}...")
         return None
     except Exception as e:
-        print(f"[DEBUG] IT POTENCIA error: {e}")
+        print(f"[DEBUG] Error leyendo por empresa/columna: {e}")
         return None
 
 
@@ -964,12 +969,9 @@ def leer_ingresos_por_potencia(
     nombre_empresa: str = "",
 ) -> Optional[float]:
     """
-    Lee INGRESOS POR POTENCIA desde Anexo 02.b Cuadros de Pago_Potencia_SEN,
-    hoja "01.BALANCE POTENCIA {Mes}-{YY} def" (ej: "01.BALANCE POTENCIA Dic-25 def").
+    Lee INGRESOS POR POTENCIA desde Anexo 02.b, hoja 01.BALANCE POTENCIA {Mes}-{YY} def.
 
-    Busca el texto "INGRESOS POR POTENCIA" y devuelve el valor numérico asociado.
-    Si nombre_empresa está definido, busca la fila donde Empresa = nombre_empresa
-    y la columna TOTAL (si la hoja tiene esa estructura).
+    Estructura: col Empresa, col TOTAL. Filtra por Empresa y devuelve el valor de TOTAL.
 
     Returns:
         Valor en CLP, None si no se encuentra
@@ -985,7 +987,27 @@ def leer_ingresos_por_potencia(
     if nombre_hoja is None:
         nombre_hoja = f"01.BALANCE POTENCIA {MESES_ANEXO_POTENCIA.get(mes, 'Dic')}-{str(anyo)[-2:]} def"
 
-    # Buscar "INGRESOS POR POTENCIA" en columna "Total general"
+    # Filtrar por Empresa y columna TOTAL (misma estructura que TOTAL INGRESOS POTENCIA FIRME)
+    if not nombre_empresa.strip():
+        print("[WARNING] INGRESOS POR POTENCIA: ingrese Empresa en la interfaz para filtrar")
+    if nombre_empresa.strip():
+        valor = leer_total_ingresos_potencia_firme_anexo(
+            archivo, nombre_hoja, nombre_empresa.strip()
+        )
+        if valor is not None:
+            print(f"[INFO] Leyendo INGRESOS POR POTENCIA desde: {archivo.name} (hoja {nombre_hoja}, filtro Empresa)")
+            print(f"  -> Dato obtenido ({nombre_empresa}): {valor:,.2f}")
+            return valor
+
+        valor = _leer_valor_por_empresa_y_columna(
+            archivo, nombre_hoja, nombre_empresa.strip(), col_valor="TOTAL"
+        )
+        if valor is not None:
+            print(f"[INFO] Leyendo INGRESOS POR POTENCIA desde: {archivo.name} (hoja {nombre_hoja})")
+            print(f"  -> Dato obtenido ({nombre_empresa}): {valor:,.2f}")
+            return valor
+
+    # Fallback: buscar por texto "INGRESOS POR POTENCIA"
     valor = leer_valor_concepto_anexo_xlsb(
         archivo,
         "INGRESOS POR POTENCIA",
@@ -993,9 +1015,17 @@ def leer_ingresos_por_potencia(
         excluir_si_contiene=["FIRME"],
         columna_valor="Total general",
     )
+    if valor is None:
+        valor = leer_valor_concepto_anexo_xlsb(
+            archivo,
+            "INGRESOS POR POTENCIA",
+            nombre_hoja=nombre_hoja,
+            excluir_si_contiene=["FIRME"],
+            columna_valor="TOTAL",
+        )
     if valor is not None:
         print(f"[INFO] Leyendo INGRESOS POR POTENCIA desde: {archivo.name} (hoja {nombre_hoja})")
-        print(f"  -> Dato obtenido (INGRESOS POR POTENCIA): {valor:,.2f}")
+        print(f"  -> Dato obtenido: {valor:,.2f}")
     return valor
 
 

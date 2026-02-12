@@ -14,6 +14,7 @@ from core.leer_excel import (
     LectorBalance,
     leer_compra_venta_energia_gm_holdings,
     leer_ingresos_por_it,
+    leer_ingresos_por_potencia,
     leer_total_ingresos_potencia_firme,
     leer_total_ingresos_sscc,
 )
@@ -747,6 +748,9 @@ class InterfazInforme:
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
 
+            # Acumular datos encontrados para print resumen al final
+            datos_encontrados = {}
+
             # TOTAL INGRESOS POR POTENCIA FIRME CLP: leer desde Anexo 02.b Potencia
             # Tabla Datos: Empresa (B) | Potencia SEN (C) | TOTAL (D)
             total_monetario = leer_total_ingresos_potencia_firme(
@@ -767,7 +771,7 @@ class InterfazInforme:
             else:
                 print(f"[INFO] TOTAL INGRESOS POR POTENCIA FIRME CLP: {total_monetario:,.2f}")
 
-            # Escribir TOTAL INGRESOS POR POTENCIA FIRME CLP en plantilla
+            datos_encontrados["TOTAL INGRESOS POR POTENCIA FIRME CLP"] = total_monetario
             escribir_total_en_resultado(
                 ruta_destino,
                 anyo,
@@ -776,15 +780,30 @@ class InterfazInforme:
                 texto_concepto="TOTAL INGRESOS POR POTENCIA FIRME CLP",
             )
 
-            # INGRESOS POR IT: Anexo 02.b Potencia, hoja 02.IT POTENCIA {Mes}-{YY} def
+            # INGRESOS POR IT POTENCIA: Anexo 02.b Potencia, hoja 02.IT POTENCIA {Mes}-{YY} def
             total_it = leer_ingresos_por_it(anyo, mes, nombre_empresa=nombre_empresa)
+            datos_encontrados["INGRESOS POR IT POTENCIA"] = total_it
             if total_it is not None:
                 escribir_total_en_resultado(
                     ruta_destino,
                     anyo,
                     mes,
                     total_it,
-                    texto_concepto="INGRESOS POR IT",
+                    texto_concepto="INGRESOS POR IT POTENCIA",
+                )
+
+            # INGRESOS POR POTENCIA: Anexo 02.b Potencia, hoja 01.BALANCE POTENCIA {Mes}-{YY} def
+            total_potencia = leer_ingresos_por_potencia(
+                anyo, mes, nombre_empresa=nombre_empresa
+            )
+            datos_encontrados["INGRESOS POR POTENCIA"] = total_potencia
+            if total_potencia is not None:
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    total_potencia,
+                    texto_concepto="INGRESOS POR POTENCIA",
                 )
 
             # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
@@ -792,6 +811,7 @@ class InterfazInforme:
                 total_energia = (
                     df_guardar[columna_monetario].dropna().astype(float).sum()
                 )
+                datos_encontrados["TOTAL INGRESOS POR ENERGIA CLP"] = total_energia
                 print(
                     f"[INFO] TOTAL INGRESOS POR ENERGIA CLP para {nombre_mes} {anyo}: "
                     f"{total_energia:,.2f} (Balance Valorizado, col monetario)"
@@ -803,19 +823,21 @@ class InterfazInforme:
                     total_energia,
                     texto_concepto="TOTAL INGRESOS POR ENERGIA CLP",
                 )
+            else:
+                datos_encontrados["TOTAL INGRESOS POR ENERGIA CLP"] = None
 
             # TOTAL INGRESOS POR SSCC CLP: EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_
             # Filtra por Nemotecnico Deudor = empresa, suma columna Monto
-            if nombre_empresa:
-                total_sscc = leer_total_ingresos_sscc(anyo, mes, nombre_empresa)
-                if total_sscc is not None:
-                    escribir_total_en_resultado(
-                        ruta_destino,
-                        anyo,
-                        mes,
-                        total_sscc,
-                        texto_concepto="TOTAL INGRESOS POR SSCC CLP",
-                    )
+            total_sscc = leer_total_ingresos_sscc(anyo, mes, nombre_empresa) if nombre_empresa else None
+            datos_encontrados["TOTAL INGRESOS POR SSCC CLP"] = total_sscc
+            if nombre_empresa and total_sscc is not None:
+                escribir_total_en_resultado(
+                    ruta_destino,
+                    anyo,
+                    mes,
+                    total_sscc,
+                    texto_concepto="TOTAL INGRESOS POR SSCC CLP",
+                )
 
             # Compra Venta Energia GM Holdings CLP: Balance, hoja Contratos, columna VENTA[CLP]
             total_gm_holdings = leer_compra_venta_energia_gm_holdings(
@@ -823,6 +845,7 @@ class InterfazInforme:
                 nombre_empresa=nombre_empresa,
                 nombre_barra=nombre_barra,
             )
+            datos_encontrados["Compra Venta Energia GM Holdings CLP"] = total_gm_holdings
             if total_gm_holdings is not None:
                 escribir_total_en_resultado(
                     ruta_destino,
@@ -833,6 +856,7 @@ class InterfazInforme:
                 )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
+            importacion_mwh = None
             if columna_fisico_kwh is not None:
                 total_fisico_kwh = (
                     df_guardar[columna_fisico_kwh].dropna().astype(float).sum()
@@ -852,6 +876,21 @@ class InterfazInforme:
                 )
             else:
                 print("[WARNING] No se encontró la columna 'fisico_kwh' en Balance Valorizado")
+            datos_encontrados["IMPORTACION MWh"] = importacion_mwh
+
+            # Print resumen de todos los datos encontrados
+            print("\n" + "=" * 60)
+            print(f"RESUMEN DATOS ESCRITOS EN PLANTILLA - {nombre_mes} {anyo}")
+            print("=" * 60)
+            for concepto, valor in datos_encontrados.items():
+                if valor is not None:
+                    if isinstance(valor, float):
+                        print(f"  {concepto}: {valor:,.2f}")
+                    else:
+                        print(f"  {concepto}: {valor}")
+                else:
+                    print(f"  {concepto}: (no encontrado)")
+            print("=" * 60 + "\n")
 
             exito = True
 

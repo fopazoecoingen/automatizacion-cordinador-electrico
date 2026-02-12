@@ -348,20 +348,284 @@ def leer_compra_venta_energia_gm_holdings(
     return float(total)
 
 
+def _encontrar_hoja_por_patron(
+    ruta: Path,
+    patrones: List[str],
+    mes: int,
+    anyo: int,
+) -> Optional[str]:
+    """
+    Busca una hoja cuyo nombre contenga todos los patrones y el mes/año.
+    Dinámico: funciona con cualquier formato (Hoja 02.IT..., 02.IT...Dic-25, etc.).
+
+    Args:
+        ruta: Archivo Excel
+        patrones: Lista de cadenas que deben aparecer (ej: ["02.IT", "POTENCIA"])
+        mes: Mes (1-12)
+        anyo: Año
+
+    Returns:
+        Nombre de la hoja encontrada, None si no hay coincidencia
+    """
+    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
+    year2 = str(anyo)[-2:]
+    variantes_mes_anyo = [
+        f"{mes_anexo}-{year2}",
+        f"{mes_anexo}{year2}",
+        f"{mes_anexo.lower()}-{year2}",
+        f"{mes_anexo.lower()}{year2}",
+        year2,
+    ]
+    try:
+        if ruta.suffix.lower() == ".xlsb":
+            try:
+                from pyxlsb import open_workbook
+                with open_workbook(str(ruta)) as wb:
+                    sheet_names = list(wb.sheets)
+            except ImportError:
+                return None
+        else:
+            xl = pd.ExcelFile(ruta)
+            sheet_names = xl.sheet_names
+        for nombre in sheet_names:
+            n_lower = str(nombre).lower()
+            if not all(p.lower() in n_lower for p in patrones):
+                continue
+            if not any(v.lower() in n_lower for v in variantes_mes_anyo):
+                continue
+            return nombre
+    except Exception:
+        pass
+    return None
+
+
+def _debug_mostrar_contenido_hoja(
+    ruta: Path,
+    nombre_hoja: str,
+    max_filas: int = 30,
+    max_cols: int = 10,
+) -> None:
+    """Muestra contenido de la hoja para depurar cuando no se encuentra un concepto."""
+    try:
+        try:
+            df = pd.read_excel(ruta, sheet_name=nombre_hoja, header=None)
+        except ValueError:
+            xl = pd.ExcelFile(ruta)
+            hoja = next((s for s in xl.sheet_names if nombre_hoja.lower() in str(s).lower()), None)
+            if hoja is None:
+                print(f"  Hojas disponibles: {xl.sheet_names}")
+                return
+            df = pd.read_excel(ruta, sheet_name=hoja, header=None)
+        print(f"[DEBUG] Contenido de hoja (primeras {max_filas} filas):")
+        for i, row in df.head(max_filas).iterrows():
+            vals = [str(v)[:25] for v in row.iloc[:max_cols].tolist()]
+            txt = " | ".join(v for v in vals if v and v != "nan")
+            if txt.strip():
+                print(f"  Fila {i}: {txt}")
+        # Buscar celdas que contengan IT o INGRESOS
+        celdas_relevantes = []
+        for i, row in df.head(50).iterrows():
+            for j, v in enumerate(row):
+                if v and ("IT" in str(v).upper() or "INGRESOS" in str(v).upper()):
+                    celdas_relevantes.append((i, j, str(v)[:50]))
+        if celdas_relevantes:
+            print(f"  Celdas con 'IT' o 'INGRESOS': {celdas_relevantes[:15]}")
+    except Exception as e:
+        print(f"[DEBUG] Error leyendo hoja para debug: {e}")
+        try:
+            xl = pd.ExcelFile(ruta)
+            print(f"  Hojas disponibles: {xl.sheet_names}")
+        except Exception:
+            pass
+
+
+def _leer_valor_por_empresa_y_columna(
+    ruta: Path,
+    nombre_hoja: str,
+    nombre_empresa: str,
+    col_valor: str,
+) -> Optional[float]:
+    """
+    Lee valor buscando la fila por USUARIOS/empresa y la columna por nombre (ej: Total).
+    Para hoja 02.IT POTENCIA: col A=USUARIOS, col Total=valor por empresa.
+    Detecta dinámicamente la fila de encabezados (puede no ser la primera).
+    """
+    try:
+        try:
+            df_raw = pd.read_excel(ruta, sheet_name=nombre_hoja, header=None)
+        except ValueError:
+            xl = pd.ExcelFile(ruta)
+            hoja = next((s for s in xl.sheet_names if nombre_hoja.lower() in str(s).lower()), None)
+            if hoja is None:
+                print(f"[DEBUG] Hoja no encontrada para IT: {nombre_hoja}")
+                return None
+            df_raw = pd.read_excel(ruta, sheet_name=hoja, header=None)
+
+        # Buscar fila donde la PRIMERA celda sea "USUARIOS" (evitar "Nota: Usuarios Pagan")
+        header_row = None
+        for i in range(min(20, len(df_raw))):
+            first_cell = df_raw.iloc[i].iloc[0] if len(df_raw.columns) > 0 else None
+            if first_cell is not None and not pd.isna(first_cell):
+                first_str = str(first_cell).strip().upper()
+                if first_str == "USUARIOS" or first_str.startswith("USUARIOS"):
+                    header_row = i
+                    break
+
+        if header_row is None:
+            for i in range(min(20, len(df_raw))):
+                for j in range(min(3, len(df_raw.columns))):
+                    cell = df_raw.iloc[i].iloc[j] if j < len(df_raw.iloc[i]) else None
+                    if cell is not None and str(cell).strip().upper() == "USUARIOS":
+                        header_row = i
+                        break
+                if header_row is not None:
+                    break
+
+        if header_row is None:
+            print("[DEBUG] IT POTENCIA: No se encontró fila de encabezados con USUARIOS")
+            return None
+
+        df = df_raw.iloc[header_row:].copy()
+        df.columns = [str(c).strip() if c is not None and not (isinstance(c, float) and pd.isna(c)) else "" for c in df.iloc[0].tolist()]
+        df = df.iloc[1:].reset_index(drop=True)
+
+        emp_norm = str(nombre_empresa).strip().replace(" ", "_").upper()
+        if not emp_norm:
+            return None
+
+        # Filtrar por columna Usuarios (prioridad: "Usuarios" exacto, luego usuario/empresa/nombre)
+        col_empresa = None
+        for c in df.columns:
+            c_lower = str(c).strip().lower()
+            if c_lower == "usuarios":
+                col_empresa = c
+                break
+        if col_empresa is None:
+            for c in df.columns:
+                if "usuario" in str(c).lower() or "empresa" in str(c).lower():
+                    col_empresa = c
+                    break
+        if col_empresa is None:
+            col_empresa = df.columns[0]
+
+        col_target = None
+        for idx, c in enumerate(df.columns):
+            c_str = str(c).strip().lower() if c else ""
+            if c_str and col_valor.lower() in c_str:
+                col_target = df.columns[idx]
+                break
+        if col_target is None:
+            # Total suele ser la última columna en estas tablas
+            for idx in range(len(df.columns) - 1, -1, -1):
+                c = df.columns[idx]
+                if str(c).strip().lower() == "total":
+                    col_target = c
+                    break
+        if col_target is None:
+            print(f"[DEBUG] IT POTENCIA: No se encontró columna '{col_valor}'. Primeras columnas: {list(df.columns)[:5]}... últimas: {list(df.columns)[-3:]}")
+            return None
+
+        for idx, row in df.iterrows():
+            celda = row.get(col_empresa)
+            if celda is None or pd.isna(celda):
+                continue
+            celda_norm = str(celda).strip().replace(" ", "_").upper()
+            if (
+                emp_norm in celda_norm
+                or celda_norm in emp_norm
+                or emp_norm.startswith(celda_norm)
+                or celda_norm.startswith(emp_norm)
+            ):
+                val = row.get(col_target)
+                parsed = _parsear_valor_monetario(val)
+                if parsed is not None:
+                    return parsed
+
+        print(f"[DEBUG] IT POTENCIA: No se encontró fila para '{nombre_empresa}' en col '{col_empresa}'. "
+              f"Columnas: {list(df.columns)[:8]}...")
+        return None
+    except Exception as e:
+        print(f"[DEBUG] IT POTENCIA error: {e}")
+        return None
+
+
+def _leer_valor_por_columna(
+    ruta: Path,
+    texto_upper: str,
+    nombre_hoja: Optional[str],
+    excluir_upper: List[str],
+    col_valor_lower: str,
+) -> Optional[float]:
+    """
+    Lee valor buscando la fila por texto_concepto y la columna por nombre.
+    Usado cuando el valor está en una columna específica (ej: "Total general").
+    """
+    try:
+        if nombre_hoja:
+            try:
+                df = pd.read_excel(ruta, sheet_name=nombre_hoja, header=0)
+            except ValueError:
+                # Hoja no encontrada, buscar por coincidencia parcial
+                xl = pd.ExcelFile(ruta)
+                hoja_encontrada = None
+                for s in xl.sheet_names:
+                    if nombre_hoja.lower() in str(s).lower():
+                        hoja_encontrada = s
+                        break
+                if hoja_encontrada is None:
+                    return None
+                df = pd.read_excel(ruta, sheet_name=hoja_encontrada, header=0)
+        else:
+            df = pd.read_excel(ruta, sheet_name=0, header=0)
+
+        # Buscar columna que contenga el nombre (ej: "total general")
+        col_target = None
+        for c in df.columns:
+            if col_valor_lower in str(c).strip().lower():
+                col_target = c
+                break
+        if col_target is None:
+            print(f"[WARNING] No se encontró columna '{col_valor_lower}' en la hoja")
+            return None
+
+        # Buscar fila con texto_concepto (excluyendo filas con excluir)
+        for idx, row in df.iterrows():
+            row_str = " ".join(str(v).upper() for v in row.dropna().astype(str))
+            if texto_upper in row_str:
+                if excluir_upper and any(ex in row_str for ex in excluir_upper):
+                    continue
+                val = row.get(col_target)
+                parsed = _parsear_valor_monetario(val)
+                if parsed is not None:
+                    print(f"[INFO] Valor encontrado en columna '{col_target}': {parsed:,.2f}")
+                    return parsed
+        print(f"[WARNING] No se encontró fila con el concepto en columna '{col_target}'")
+        return None
+    except Exception as e:
+        print(f"[WARNING] Error leyendo por columna: {e}")
+        return None
+
+
 def leer_valor_concepto_anexo_xlsb(
     ruta_anexo: Path,
     texto_concepto: str,
     nombre_hoja: Optional[str] = None,
+    excluir_si_contiene: Optional[List[str]] = None,
+    columna_valor: Optional[str] = None,
 ) -> Optional[float]:
     """
     Busca 'texto_concepto' en el Anexo y devuelve el valor numérico asociado.
-    El valor suele estar en la misma fila, columna adyacente a la derecha.
+    Por defecto, el valor está en la misma fila, columna adyacente a la derecha.
+    Si columna_valor está definida, toma el valor de esa columna por nombre.
 
     Args:
         ruta_anexo: Ruta del archivo .xlsb o .xlsx
         texto_concepto: Texto a buscar (ej: "TOTAL INGRESOS POR POTENCIA FIRME CLP")
         nombre_hoja: Nombre de la hoja donde buscar (ej: "01.BALANCE POTENCIA Dic-25 def").
             Si None, busca en todas las hojas.
+        excluir_si_contiene: Si la celda contiene alguna de estas cadenas, se omite.
+        columna_valor: Nombre de la columna donde tomar el valor (ej: "Total general").
+            Si None, usa la primera columna numérica a la derecha del concepto.
 
     Returns:
         Valor numérico encontrado, None si no se encuentra
@@ -371,6 +635,16 @@ def leer_valor_concepto_anexo_xlsb(
         return None
 
     texto_upper = texto_concepto.upper()
+    excluir_upper = (
+        [e.upper() for e in excluir_si_contiene] if excluir_si_contiene else []
+    )
+    col_valor_lower = columna_valor.strip().lower() if columna_valor else None
+
+    # Si se especifica columna_valor, leer por encabezados (pandas o pyxlsb)
+    if col_valor_lower:
+        return _leer_valor_por_columna(
+            ruta, texto_upper, nombre_hoja, excluir_upper, col_valor_lower
+        )
 
     if ruta.suffix.lower() == ".xlsb":
         try:
@@ -407,6 +681,12 @@ def leer_valor_concepto_anexo_xlsb(
                         for col_idx, val in row_by_col.items():
                             valor_str = str(val).strip().upper()
                             if texto_upper in valor_str:
+                                if excluir_si_contiene:
+                                    if any(
+                                        ex.upper() in valor_str
+                                        for ex in excluir_si_contiene
+                                    ):
+                                        break  # omitir fila, siguiente fila
                                 # Buscar valor numérico en columnas siguientes de la misma fila
                                 cols_orden = sorted(row_by_col.keys())
                                 for c in cols_orden:
@@ -428,10 +708,16 @@ def leer_valor_concepto_anexo_xlsb(
     except Exception:
         return None
 
+    excluir_upper = (
+        [e.upper() for e in excluir_si_contiene] if excluir_si_contiene else []
+    )
+
     for _sheet_name, df in df_dict.items():
         for _, row in df.iterrows():
             row_str = " ".join(str(v).upper() for v in row.dropna().astype(str))
             if texto_upper in row_str:
+                if excluir_upper and any(ex in row_str for ex in excluir_upper):
+                    continue
                 for v in row:
                     try:
                         return float(v)
@@ -566,9 +852,11 @@ def leer_total_ingresos_potencia_firme(
         print(f"[WARNING] No se encontró Anexo 02.b Potencia para {mes}/{anyo}")
         return None
 
-    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
-    year2 = str(anyo)[-2:]
-    nombre_hoja = f"01.BALANCE POTENCIA {mes_anexo}-{year2} def"
+    nombre_hoja = _encontrar_hoja_por_patron(
+        archivo, patrones=["01.BALANCE", "POTENCIA"], mes=mes, anyo=anyo
+    )
+    if nombre_hoja is None:
+        nombre_hoja = f"01.BALANCE POTENCIA {MESES_ANEXO_POTENCIA.get(mes, 'Dic')}-{str(anyo)[-2:]} def"
 
     if nombre_empresa:
         valor = leer_total_ingresos_potencia_firme_anexo(
@@ -601,10 +889,85 @@ def leer_ingresos_por_it(
     nombre_empresa: str = "",
 ) -> Optional[float]:
     """
-    Lee INGRESOS POR IT desde Anexo 02.b Cuadros de Pago_Potencia_SEN,
-    hoja "02.IT POTENCIA {Mes}-{YY} def" (ej: "02.IT POTENCIA Dic-25 def").
+    Lee INGRESOS POR IT POTENCIA desde Anexo 02.b, hoja 02.IT/ASIGNACIÓN IT POTENCIA.
 
-    Busca el texto "INGRESOS POR IT" y devuelve el valor numérico asociado.
+    Estructura: col USUARIOS (empresa), col Total (valor por fila).
+    Si nombre_empresa está definido, busca la fila donde USUARIOS = empresa
+    y devuelve el valor de la columna Total.
+
+    Returns:
+        Valor en CLP, None si no se encuentra
+    """
+    archivo = encontrar_archivo_anexo_potencia(anyo, mes)
+    if archivo is None:
+        print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR IT POTENCIA {mes}/{anyo}")
+        return None
+
+    # Buscar hoja dinámicamente (02.IT POTENCIA, 02.ASIGNACIÓN IT POTENCIA, etc.)
+    nombre_hoja = _encontrar_hoja_por_patron(
+        archivo, patrones=["02", "IT", "POTENCIA"], mes=mes, anyo=anyo
+    )
+    if nombre_hoja is None:
+        try:
+            xl = pd.ExcelFile(archivo)
+            hojas = xl.sheet_names
+            print(f"[WARNING] No se encontró hoja 02.IT POTENCIA para {mes}/{anyo}")
+            print(f"  Hojas en archivo: {hojas[:10]}{'...' if len(hojas) > 10 else ''}")
+        except Exception:
+            print(f"[WARNING] No se encontró hoja 02.IT POTENCIA para {mes}/{anyo}")
+        return None
+
+    print(f"[INFO] Hoja IT POTENCIA encontrada: {nombre_hoja}")
+
+    # Estructura: col USUARIOS (empresa), col Total (valor). Requiere nombre_empresa para filtrar.
+    if not nombre_empresa.strip():
+        print("[WARNING] INGRESOS POR IT POTENCIA: ingrese Empresa en la interfaz para filtrar por Usuarios")
+    if nombre_empresa:
+        valor = _leer_valor_por_empresa_y_columna(
+            archivo,
+            nombre_hoja,
+            nombre_empresa.strip(),
+            col_valor="Total",
+        )
+        if valor is not None:
+            print(f"[INFO] Leyendo INGRESOS POR IT POTENCIA desde: {archivo.name} (hoja {nombre_hoja}, col Total)")
+            print(f"  -> Dato obtenido ({nombre_empresa}): {valor:,.2f}")
+            return valor
+
+    # Fallback: buscar por texto en fila
+    for texto in ["INGRESOS POR IT POTENCIA", "INGRESOS POR IT"]:
+        valor = leer_valor_concepto_anexo_xlsb(
+            archivo,
+            texto,
+            nombre_hoja=nombre_hoja,
+            columna_valor="Total",
+        )
+        if valor is None:
+            valor = leer_valor_concepto_anexo_xlsb(
+                archivo,
+                texto,
+                nombre_hoja=nombre_hoja,
+            )
+        if valor is not None:
+            print(f"[INFO] Leyendo INGRESOS POR IT POTENCIA desde: {archivo.name} (hoja {nombre_hoja})")
+            print(f"  -> Dato obtenido: {valor:,.2f}")
+            return valor
+
+    print(f"[WARNING] No se encontró INGRESOS POR IT POTENCIA en hoja {nombre_hoja}")
+    _debug_mostrar_contenido_hoja(archivo, nombre_hoja)
+    return None
+
+
+def leer_ingresos_por_potencia(
+    anyo: int,
+    mes: int,
+    nombre_empresa: str = "",
+) -> Optional[float]:
+    """
+    Lee INGRESOS POR POTENCIA desde Anexo 02.b Cuadros de Pago_Potencia_SEN,
+    hoja "01.BALANCE POTENCIA {Mes}-{YY} def" (ej: "01.BALANCE POTENCIA Dic-25 def").
+
+    Busca el texto "INGRESOS POR POTENCIA" y devuelve el valor numérico asociado.
     Si nombre_empresa está definido, busca la fila donde Empresa = nombre_empresa
     y la columna TOTAL (si la hoja tiene esa estructura).
 
@@ -613,22 +976,26 @@ def leer_ingresos_por_it(
     """
     archivo = encontrar_archivo_anexo_potencia(anyo, mes)
     if archivo is None:
-        print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR IT {mes}/{anyo}")
+        print(f"[WARNING] No se encontró Anexo 02.b Potencia para leer INGRESOS POR POTENCIA {mes}/{anyo}")
         return None
 
-    mes_anexo = MESES_ANEXO_POTENCIA.get(mes, "Dic")
-    year2 = str(anyo)[-2:]
-    nombre_hoja = f"02.IT POTENCIA {mes_anexo}-{year2} def"
+    nombre_hoja = _encontrar_hoja_por_patron(
+        archivo, patrones=["01.BALANCE", "POTENCIA"], mes=mes, anyo=anyo
+    )
+    if nombre_hoja is None:
+        nombre_hoja = f"01.BALANCE POTENCIA {MESES_ANEXO_POTENCIA.get(mes, 'Dic')}-{str(anyo)[-2:]} def"
 
-    # Buscar por texto "INGRESOS POR IT"
+    # Buscar "INGRESOS POR POTENCIA" en columna "Total general"
     valor = leer_valor_concepto_anexo_xlsb(
         archivo,
-        "INGRESOS POR IT",
+        "INGRESOS POR POTENCIA",
         nombre_hoja=nombre_hoja,
+        excluir_si_contiene=["FIRME"],
+        columna_valor="Total general",
     )
     if valor is not None:
-        print(f"[INFO] Leyendo INGRESOS POR IT desde: {archivo.name} (hoja {nombre_hoja})")
-        print(f"  -> Dato obtenido (INGRESOS POR IT): {valor:,.2f}")
+        print(f"[INFO] Leyendo INGRESOS POR POTENCIA desde: {archivo.name} (hoja {nombre_hoja})")
+        print(f"  -> Dato obtenido (INGRESOS POR POTENCIA): {valor:,.2f}")
     return valor
 
 

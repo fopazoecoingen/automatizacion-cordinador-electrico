@@ -582,16 +582,12 @@ class InterfazInforme:
         try:
             ruta_destino_path = Path(ruta_destino)
             ruta_destino_path.parent.mkdir(parents=True, exist_ok=True)
-            from shutil import copyfile
 
-            copyfile(ruta_plantilla, ruta_destino)
-            print(f"[INFO] Plantilla copiada a destino: {ruta_destino}")
-
-            # Procesar el mes
-            self.procesar_mes(
+            # Procesar el mes (incluye validar descargas antes de copiar/ procesar)
+            exito = self.procesar_mes(
                 anyo,
                 mes,
-                ruta_destino,
+                ruta_plantilla,
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
@@ -600,6 +596,9 @@ class InterfazInforme:
                 1,
                 1,
             )
+
+            if not exito:
+                return  # Error 403 u otro: no mostrar mensaje de éxito ni hacer más nada
 
             # Mensaje final
             self.root.after(0, lambda: self.progress_var.set(100))
@@ -648,7 +647,7 @@ class InterfazInforme:
         self,
         anyo: int,
         mes: int,
-        ruta_plantilla_destino: str,  # noqa: ARG002 - se usa como referencia lógica
+        ruta_plantilla: str,
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
@@ -656,8 +655,8 @@ class InterfazInforme:
         tipos_seleccionados: list,
         mes_actual: int,
         total_meses: int,
-    ) -> None:
-        """Procesar un mes individual del rango."""
+    ) -> bool:
+        """Procesar un mes individual del rango. Retorna True si tuvo éxito, False si hubo error (ej. 403)."""
         try:
             nombre_mes = meses[mes]
             print(f"\n[INFO] Procesando mes {mes_actual}/{total_meses}: {nombre_mes} {anyo}")
@@ -742,7 +741,7 @@ class InterfazInforme:
                         ),
                     )
 
-            # Si energia_resultados falló, no podemos generar el informe para este mes
+            # Si energia_resultados falló, no podemos generar el informe: no copiar ni procesar
             if not ruta_zip_energia:
                 ma, tm, nm, a = mes_actual, total_meses, nombre_mes, anyo
                 if codigo_error_energia == 403:
@@ -752,11 +751,16 @@ class InterfazInforme:
                             text=f"[{ma}/{tm}] ✗ Error 403: Contenido no disponible para {nm} {a}"
                         ),
                     )
-                    print(
-                        f"[WARNING] Error 403 para {nombre_mes} {anyo}, "
-                        "continuando con siguiente mes..."
+                    self.root.after(
+                        50,
+                        lambda n=nombre_mes, an=anyo: messagebox.showerror(
+                            "Información no disponible",
+                            f"No se encuentra la información disponible para la descarga para {n} {an}.",
+                            parent=self.root,
+                        ),
                     )
-                    return  # Continuar con el siguiente mes
+                    print(f"[WARNING] Error 403 para {nombre_mes} {anyo}: no se realiza ningún procesamiento.")
+                    return False
                 else:
                     self.root.after(
                         0,
@@ -764,11 +768,24 @@ class InterfazInforme:
                             text=f"[{ma}/{tm}] ✗ Error al descargar para {nm} {a}"
                         ),
                     )
-                    print(
-                        f"[WARNING] Error al descargar para {nombre_mes} {anyo}, "
-                        "continuando con siguiente mes..."
+                    self.root.after(
+                        50,
+                        lambda n=nombre_mes, an=anyo: messagebox.showerror(
+                            "Información no disponible",
+                            f"No se encuentra la información disponible para la descarga para {n} {an}.",
+                            parent=self.root,
+                        ),
                     )
-                    return  # Continuar con el siguiente mes
+                    print(
+                        f"[WARNING] Error al descargar para {nombre_mes} {anyo}: no se realiza ningún procesamiento."
+                    )
+                    return False
+
+            # Copiar plantilla solo después de confirmar que las descargas fueron exitosas
+            from shutil import copyfile
+
+            copyfile(ruta_plantilla, ruta_destino)
+            print(f"[INFO] Plantilla copiada a destino: {ruta_destino}")
 
             # Paso 3: Buscar archivo Balance
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(35)))
@@ -851,7 +868,7 @@ class InterfazInforme:
                 if nombre_empresa:
                     if columna_empresa is None:
                         print("[ERROR] No se encontró la columna 'nombre_corto_empresa'")
-                        return
+                        return False
                     df_guardar = df_guardar[
                         df_guardar[columna_empresa].astype(str).str.lower()
                         == nombre_empresa.lower()
@@ -860,7 +877,7 @@ class InterfazInforme:
                 if nombre_barra:
                     if columna_barra is None:
                         print("[ERROR] No se encontró la columna 'barra'")
-                        return
+                        return False
                     df_guardar = df_guardar[
                         df_guardar[columna_barra].astype(str).str.lower()
                         == nombre_barra.lower()
@@ -928,7 +945,7 @@ class InterfazInforme:
                 # Fallback: usar suma monetario del Balance Valorizado
                 if columna_monetario is None:
                     print("[ERROR] No se encontró Anexo Potencia ni columna 'monetario' en Balance")
-                    return
+                    return False
                 total_monetario = (
                     df_guardar[columna_monetario].dropna().astype(float).sum()
                 )
@@ -1080,8 +1097,10 @@ class InterfazInforme:
                     f"[OK] Mes {mes_actual}/{total_meses} ({nombre_mes} {anyo}) "
                     "procesado exitosamente"
                 )
+                return True
             else:
                 print(f"[ERROR] Error al guardar datos para {nombre_mes} {anyo}")
+                return False
 
         except FileNotFoundError as e:
             print(
@@ -1096,6 +1115,7 @@ class InterfazInforme:
                     )
                 ),
             )
+            return False
 
         except Exception as e:
             print(f"[ERROR] Error procesando {nombre_mes} {anyo}: {str(e)}")
@@ -1110,6 +1130,7 @@ class InterfazInforme:
                     )
                 ),
             )
+            return False
 
 
 def main() -> None:

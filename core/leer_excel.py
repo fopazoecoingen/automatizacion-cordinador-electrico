@@ -367,12 +367,15 @@ def leer_total_ingresos_sscc(
     total = df_filtrado.iloc[:, idx_monto].apply(
         lambda v: _parsear_valor_monetario(v) or 0
     ).sum()
+    total = float(total)
+    if total > 0:
+        total = -total
 
     print(
         f"[INFO] Leyendo TOTAL INGRESOS POR SSCC CLP desde: {archivo.name} (hoja CPI_, Nemotecnico Deudor)"
     )
     print(f"  -> Dato obtenido ({nombre_empresa}, Monto): {total:,.2f}")
-    return float(total)
+    return total
 
 
 def _normalizar_texto(s: str) -> str:

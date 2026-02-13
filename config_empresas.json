@@ -4,13 +4,8 @@
             "nombreEmpresa": "VIENTOS_DE_RENAICO",
             "Barras": ["NAHUELBUTA"],
             "IMPORTACION_MWh": "C_CTRL_EO_LA_FLOR",
-            "TOTAL_INGRESOS_POR_ENERGIA_CLP": ["G_CTRL_EO_LA_FLOR"]
-        },
-        {
-            "nombreEmpresa": "ABASTIBLE",
-            "Barras": ["POLPAICO","HOSPITAL"],
-            "IMPORTACION_MWh": "20399",
-            "TOTAL_INGRESOS_POR_ENERGIA_CLP": ["20412"]
+            "TOTAL_INGRESOS_POR_ENERGIA_CLP": ["G_CTRL_EO_LA_FLOR"],
+            "POTENCIA_FIRME": ["Eólica"]
         }
     ]
 }

@@ -1000,10 +1000,18 @@ class InterfazInforme:
             # Acumular datos encontrados para print resumen al final
             datos_encontrados = {}
 
-            # TOTAL INGRESOS POR POTENCIA FIRME CLP: leer desde Anexo 02.b Potencia
-            # Tabla Datos: Empresa (B) | Potencia SEN (C) | TOTAL (D)
+            # TOTAL INGRESOS POR POTENCIA FIRME CLP: BDef Detalle (07. Detalle por empresa, Balance2)
+            # o fallback Anexo 02.b. Filtro Concepto (ej: Eólica) desde config POTENCIA_FIRME
+            concepto_filtro = None
+            if empresa_config:
+                cf = empresa_config.get("POTENCIA_FIRME")
+                if cf is not None:
+                    concepto_filtro = cf if isinstance(cf, (list, tuple)) else [cf]
             total_monetario = leer_total_ingresos_potencia_firme(
-                anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
+                anyo, mes,
+                nombre_empresa=nombre_empresa,
+                carpeta_base=str(carpeta_bd),
+                concepto_filtro=concepto_filtro,
             )
             if total_monetario is None:
                 # Fallback: usar suma monetario del Balance Valorizado

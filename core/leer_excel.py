@@ -1,6 +1,8 @@
 """
 Módulo para leer y acceder a datos de archivos Excel de PLABACOM.
 """
+import unicodedata
+
 import pandas as pd
 import openpyxl
 from openpyxl import load_workbook
@@ -126,6 +128,93 @@ MESES_ANEXO_POTENCIA = {
     11: "Nov",
     12: "Dic",
 }
+
+
+def encontrar_archivo_bdef_detalle(
+    anyo: int,
+    mes: int,
+    carpeta_base: str = "bd_data",
+) -> Optional[Path]:
+    """
+    Encuentra el archivo BDef Detalle en la carpeta 07. Detalle por empresa,
+    dentro de la estructura descomprimida del ZIP PLABACOM_*_Potencia_Balance_Psuf_*.
+
+    Ejemplo de ruta esperada:
+        descomprimidos/PLABACOM_2025_12_..._Potencia_Balance_Psuf_2512_def/07. Detalle por empresa/BDef Detalle Dic25_def_v2.xlsx
+
+    Args:
+        anyo: Año del archivo
+        mes: Mes del archivo (1-12)
+        carpeta_base: Carpeta base (por defecto "bd_data")
+
+    Returns:
+        Path del archivo encontrado, None si no existe
+    """
+    anyo = int(anyo)
+    mes = int(mes)
+    if mes < 1 or mes > 12:
+        return None
+
+    mes_abrev = MESES_ANEXO_POTENCIA.get(mes, "Dic")
+    year2 = str(anyo)[-2:]
+    yymm = f"{year2}{str(mes).zfill(2)}"
+
+    carpeta_descomprimidos = Path(carpeta_base) / "descomprimidos"
+    if not carpeta_descomprimidos.exists():
+        return None
+
+    subcarpeta_detalle = "07. Detalle por empresa"
+    patrones_nombre = ["BDef Detalle", "BDef_Detalle", "BDefDetalle"]
+
+    def _buscar_bdef_en_carpeta(carpeta_base: Path) -> Optional[Path]:
+        """Busca BDef en carpeta_base o en subcarpeta 07. Detalle por empresa (recursivo)."""
+        # 1) Directamente en carpeta_base/07. Detalle por empresa
+        for nombre_sub in [subcarpeta_detalle, subcarpeta_detalle.replace(" ", "_")]:
+            carpeta_detalle = carpeta_base / nombre_sub
+            if carpeta_detalle.exists():
+                for archivo in carpeta_detalle.iterdir():
+                    if archivo.is_file() and archivo.suffix.lower() in (".xlsx", ".xlsb", ".xlsm"):
+                        if any(p in archivo.name for p in patrones_nombre):
+                            return archivo
+                        if "bdef" in archivo.name.lower():
+                            return archivo
+        # 2) Buscar recursivamente "07. Detalle por empresa" dentro de carpetas Potencia
+        for sub in carpeta_base.rglob("*"):
+            if sub.is_dir() and sub.name == subcarpeta_detalle:
+                for archivo in sub.iterdir():
+                    if archivo.is_file() and archivo.suffix.lower() in (".xlsx", ".xlsb", ".xlsm"):
+                        if any(p in archivo.name for p in patrones_nombre) or "bdef" in archivo.name.lower():
+                            return archivo
+        return None
+
+    # Buscar en carpetas Potencia que contengan el periodo
+    for carpeta in sorted(carpeta_descomprimidos.iterdir(), reverse=True):
+        if not carpeta.is_dir():
+            continue
+        if "Potencia" not in carpeta.name:
+            continue
+        if yymm not in carpeta.name:
+            continue
+
+        archivo = _buscar_bdef_en_carpeta(carpeta)
+        if archivo is not None:
+            print(f"[OK] Archivo BDef Detalle encontrado: {archivo}")
+            return archivo
+
+    # Fallback: búsqueda recursiva en todo descomprimidos
+    for archivo in carpeta_descomprimidos.rglob("*"):
+        if not archivo.is_file():
+            continue
+        if archivo.suffix.lower() not in (".xlsx", ".xlsb", ".xlsm"):
+            continue
+        if subcarpeta_detalle not in str(archivo.parent):
+            continue
+        if "Potencia" not in str(archivo) or yymm not in str(archivo):
+            continue
+        if any(p in archivo.name for p in patrones_nombre):
+            return archivo
+
+    return None
 
 
 def encontrar_archivo_anexo_potencia(
@@ -1058,6 +1147,288 @@ def _parsear_valor_monetario(val) -> Optional[float]:
         return None
 
 
+def _leer_total_ingresos_potencia_firme_bdef_detalle(
+    ruta: Path,
+    nombre_empresa: str,
+    nombre_hoja: str = "Balance2",
+    concepto_filtro: Optional[List[str]] = None,
+) -> Optional[float]:
+    """
+    Lee TOTAL INGRESOS POR POTENCIA FIRME CLP desde BDef Detalle, hoja Balance2.
+    Detecta dinámicamente columnas Empresa, Concepto y Pago PSUF ($).
+    Filtra por Empresa y, si concepto_filtro está definido, solo filas donde
+    Concepto coincida (ej: "Eólica" desde config POTENCIA_FIRME).
+
+    Args:
+        ruta: Ruta del archivo BDef Detalle
+        nombre_empresa: Nombre de la empresa (ej: VIENTOS_DE_RENAICO)
+        nombre_hoja: Nombre de la hoja (por defecto Balance2)
+        concepto_filtro: Lista de conceptos a incluir (ej: ["Eólica"]). Si None, suma todos.
+
+    Returns:
+        Suma de Pago PSUF ($) para la empresa (y concepto si aplica), None si no se encuentra
+    """
+    ruta = Path(ruta)
+    if not ruta.exists():
+        return None
+
+    def _norm_empresa(s: str) -> str:
+        """Normaliza nombre empresa: mayúsculas, espacios/underscores unificados."""
+        if not s:
+            return ""
+        return str(s).strip().upper().replace(" ", "_").replace("-", "_")
+
+    nombre_empresa_norm = _norm_empresa(nombre_empresa)
+    if not nombre_empresa_norm:
+        return None
+
+    # .xlsm y .xlsx requieren engine='openpyxl' explícito para evitar fallos
+    use_openpyxl = ruta.suffix.lower() in (".xlsm", ".xlsx")
+    read_kw = {"sheet_name": nombre_hoja, "header": None}
+    if use_openpyxl:
+        read_kw["engine"] = "openpyxl"
+
+    try:
+        df = pd.read_excel(ruta, **read_kw)
+    except Exception as e1:
+        # Buscar hoja Balance2 por variantes (Balance 2, balance2, etc.)
+        try:
+            xl_kw = {"engine": "openpyxl"} if use_openpyxl else {}
+            xl = pd.ExcelFile(ruta, **xl_kw)
+            hoja_encontrada = None
+            for sh in xl.sheet_names:
+                sh_lower = str(sh).lower()
+                if "balance" in sh_lower and "2" in sh_lower:
+                    hoja_encontrada = sh
+                    break
+                if sh_lower == "balance2" or sh_lower.replace(" ", "") == "balance2":
+                    hoja_encontrada = sh
+                    break
+            if hoja_encontrada:
+                read_kw["sheet_name"] = hoja_encontrada
+                df = pd.read_excel(ruta, **read_kw)
+            else:
+                print(
+                    f"[WARNING] BDef Detalle: no se encontró hoja Balance2 en {ruta.name}. "
+                    f"Hojas: {xl.sheet_names[:8]}"
+                )
+                return None
+        except Exception as e2:
+            print(
+                f"[WARNING] BDef Detalle: error leyendo {ruta.name}: {e2}"
+            )
+            return None
+
+    # Detectar dinámicamente fila de encabezados y columnas Empresa, Concepto y Pago PSUF
+    col_empresa = None
+    col_concepto = None
+    col_pago_psuf = None
+    fila_header = None
+
+    # Balance2: estructura conocida Empresa=col16, Concepto=col17, Pago PSUF=col19 (fila 11 header)
+    hoja_lower = str(nombre_hoja).lower()
+    if "balance" in hoja_lower and "2" in hoja_lower and len(df.columns) > 19:
+        # Verificar que existan los headers en fila 10-11
+        for r in (9, 10):
+            if r >= len(df):
+                break
+            row = df.iloc[r]
+            has_emp = len(row) > 16 and "empresa" in str(row.iloc[16]).lower()
+            has_con = len(row) > 17 and "concepto" in str(row.iloc[17]).lower()
+            if has_emp and has_con:
+                col_empresa = 16
+                col_concepto = 17
+                col_pago_psuf = 19
+                fila_header = 10
+                break
+
+    if col_empresa is None:
+        for row_idx in range(min(25, len(df))):
+            row = df.iloc[row_idx]
+            emp_cols = []
+            con_cols = []
+            for col_idx, val in enumerate(row):
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    continue
+                val_str = str(val).strip().lower()
+                if val_str == "empresa":
+                    emp_cols.append(col_idx)
+                if val_str == "concepto":
+                    con_cols.append(col_idx)
+            # Empresa y Concepto adyacentes = tabla por empresa (cols 16, 17)
+            if emp_cols and con_cols:
+                for ec in emp_cols:
+                    for cc in con_cols:
+                        if abs(ec - cc) <= 5:
+                            col_empresa = ec
+                            col_concepto = cc
+                            fila_header = row_idx
+                            # Pago PSUF: buscar en esta fila y en la anterior (cabecera 2 filas)
+                            for r_psuf in (row_idx, row_idx - 1):
+                                if r_psuf < 0:
+                                    continue
+                                rw = df.iloc[r_psuf]
+                                for c in range(cc, min(cc + 15, len(rw))):
+                                    v = rw.iloc[c] if c < len(rw) else None
+                                    if v and "pago" in str(v).lower() and "psuf" in str(v).lower():
+                                        col_pago_psuf = c
+                                        break
+                                if col_pago_psuf is not None:
+                                    break
+                            if col_pago_psuf is None:
+                                col_pago_psuf = cc + 2
+                            break
+                    if col_empresa is not None:
+                        break
+                if col_empresa is not None:
+                    break
+            if col_empresa is not None:
+                break
+
+    # Fallback: buscar "empresa" y "concepto" como substring
+    if col_empresa is None and fila_header is None:
+        for row_idx in range(min(25, len(df))):
+            row = df.iloc[row_idx]
+            for col_idx, val in enumerate(row):
+                if val is None:
+                    continue
+                if "empresa" in str(val).lower():
+                    col_empresa = col_idx
+                    fila_header = row_idx
+                    break
+            if col_empresa is not None:
+                break
+
+    if col_concepto is None:
+        for row_idx in range(min(25, len(df))):
+            row = df.iloc[row_idx]
+            for col_idx, val in enumerate(row):
+                if val is None:
+                    continue
+                if "concepto" in str(val).lower():
+                    col_concepto = col_idx
+                    break
+            if col_concepto is not None:
+                break
+
+    if col_pago_psuf is None:
+        # Preferir Pago PSUF a la derecha de Concepto (mismo bloque Empresa/Concepto)
+        min_col_psuf = col_concepto if col_concepto is not None else 0
+        for row_idx in range(min(25, len(df))):
+            row = df.iloc[row_idx]
+            for col_idx in range(min_col_psuf, len(row)):
+                val = row.iloc[col_idx] if col_idx < len(row) else None
+                if val is None:
+                    continue
+                val_str = str(val).lower()
+                if "psuf" in val_str and ("pago" in val_str or "$" in val_str):
+                    col_pago_psuf = col_idx
+                    break
+            if col_pago_psuf is not None:
+                break
+
+    # Si hay concepto_filtro, col_concepto es obligatorio
+    if concepto_filtro and col_concepto is None:
+        print(
+            f"[WARNING] Se requiere filtro Concepto (POTENCIA_FIRME) pero no se encontró columna 'Concepto' en {ruta.name}"
+        )
+        return None
+
+    if col_empresa is None or col_pago_psuf is None:
+        print(
+            f"[WARNING] No se detectó columna Empresa o Pago PSUF en {ruta.name} hoja {nombre_hoja}. "
+            f"Col Empresa: {col_empresa}, Col Pago PSUF: {col_pago_psuf}"
+        )
+        return None
+
+    # Fallback conocido para Balance2: Empresa=16, Concepto=17, Pago PSUF=19
+    if "balance2" in str(nombre_hoja).lower() and col_empresa == 16 and col_concepto == 17 and col_pago_psuf != 19:
+        if len(df.columns) > 19:
+            col_pago_psuf = 19
+
+    def _normalizar_comparacion(s: str) -> str:
+        """Normaliza para comparación: mayúsculas y sin acentos (Eólica/EOLICA → eolica)."""
+        if not s:
+            return ""
+        s = unicodedata.normalize("NFD", str(s).strip().upper())
+        return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+    # Normalizar concepto_filtro para comparación (soporta Eólica, Eolica, EOLICA)
+    conceptos_aceptados = None
+    if concepto_filtro:
+        conceptos_aceptados = [_normalizar_comparacion(c) for c in concepto_filtro if str(c).strip()]
+
+    # Leer datos: filas debajo del encabezado, filtrar por empresa y concepto, sumar Pago PSUF
+    # En Excel con estructura pivot/grupo, Empresa puede estar solo en la primera fila del grupo;
+    # las filas siguientes (DP, Eólica) tienen celda Empresa vacía. Usar "forward fill".
+    total = 0.0
+    filas_encontradas = 0
+    fila_inicio = (fila_header + 1) if fila_header is not None else 1
+    ultima_empresa = None
+    for idx in range(fila_inicio, len(df)):
+        row = df.iloc[idx]
+        emp_val = row.iloc[col_empresa] if col_empresa < len(row) else None
+        emp_str = str(emp_val).strip() if emp_val is not None and not (isinstance(emp_val, float) and pd.isna(emp_val)) else ""
+        if emp_str:
+            ultima_empresa = emp_str
+        # Si Empresa está vacía, heredar de la fila anterior (estructura pivot)
+        empresa_para_filtrar = ultima_empresa if ultima_empresa else emp_str
+        if not empresa_para_filtrar or _norm_empresa(empresa_para_filtrar) != nombre_empresa_norm:
+            continue
+        # Filtrar por Concepto si está configurado (ej: solo "Eólica")
+        if conceptos_aceptados and col_concepto is not None:
+            concepto_val = row.iloc[col_concepto] if col_concepto < len(row) else None
+            concepto_norm = _normalizar_comparacion(concepto_val) if concepto_val is not None else ""
+            if concepto_norm not in conceptos_aceptados:
+                continue
+        filas_encontradas += 1
+        psuf_val = row.iloc[col_pago_psuf] if col_pago_psuf < len(row) else None
+        parsed = _parsear_valor_monetario(psuf_val)
+        if parsed is not None:
+            total += parsed
+
+    if filas_encontradas == 0:
+        # Debug: mostrar muestras de datos para diagnosticar estructura
+        muestra_filas = []
+        ult_dbg = None
+        for idx in range(fila_inicio, min(fila_inicio + 50, len(df))):
+            row = df.iloc[idx]
+            emp_v = row.iloc[col_empresa] if col_empresa < len(row) else None
+            emp_s = str(emp_v).strip() if emp_v is not None and not (isinstance(emp_v, float) and pd.isna(emp_v)) else ""
+            if emp_s:
+                ult_dbg = emp_s
+            con_v = row.iloc[col_concepto] if col_concepto is not None and col_concepto < len(row) else None
+            con_s = str(con_v).strip() if con_v is not None else ""
+            psuf_v = row.iloc[col_pago_psuf] if col_pago_psuf < len(row) else None
+            emp_ff = ult_dbg or emp_s
+            if _norm_empresa(emp_ff) == nombre_empresa_norm and (not conceptos_aceptados or _normalizar_comparacion(con_v) in conceptos_aceptados):
+                muestra_filas.append((idx + 1, emp_s or "(vacio)", con_s, psuf_v, "MATCH"))
+            elif _norm_empresa(emp_ff) == nombre_empresa_norm:
+                muestra_filas.append((idx + 1, emp_s or "(vacio)", con_s, psuf_v, "empresaOK conceptoNO"))
+            if len(muestra_filas) >= 5:
+                break
+        if not muestra_filas:
+            for idx in range(fila_inicio, min(fila_inicio + 15, len(df))):
+                row = df.iloc[idx]
+                emp_v = row.iloc[col_empresa] if col_empresa < len(row) else None
+                emp_s = str(emp_v).strip() if emp_v is not None else "(vac)"
+                con_v = row.iloc[col_concepto] if col_concepto is not None and col_concepto < len(row) else None
+                con_s = str(con_v).strip() if con_v is not None else "(vac)"
+                psuf_v = row.iloc[col_pago_psuf] if col_pago_psuf < len(row) else None
+                muestra_filas.append((idx + 1, emp_s[:30], con_s[:20], psuf_v, ""))
+        print(
+            f"[WARNING] BDef Detalle: no se encontraron filas para {nombre_empresa}"
+            + (f" con Concepto={concepto_filtro}" if concepto_filtro else "")
+            + f" en {ruta.name} hoja Balance2"
+        )
+        print(f"  [DEBUG] Col Empresa={col_empresa}, Concepto={col_concepto}, PagoPSUF={col_pago_psuf}, fila_header={fila_header}")
+        print(f"  [DEBUG] Buscando: empresa_norm='{nombre_empresa_norm}', conceptos={conceptos_aceptados}")
+        for m in muestra_filas[:8]:
+            print(f"  [DEBUG] Fila Excel {m[0]}: Empresa='{m[1]}' Concepto='{m[2]}' PagoPSUF={m[3]} {m[4]}")
+        return None
+    return total
+
+
 def leer_total_ingresos_potencia_firme_anexo(
     ruta_anexo: Path,
     nombre_hoja: str,
@@ -1145,21 +1516,64 @@ def leer_total_ingresos_potencia_firme(
     mes: int,
     nombre_empresa: str = "",
     carpeta_base: str = "bd_data",
+    concepto_filtro: Optional[Union[List[str], str]] = None,
 ) -> Optional[float]:
     """
-    Lee el valor TOTAL INGRESOS POR POTENCIA FIRME CLP desde el Anexo 02.b
-    de la carpeta Potencia, hoja "01.BALANCE POTENCIA {Mes}-{Year} def".
-    Busca la fila donde Empresa = nombre_empresa y devuelve el valor de la columna TOTAL.
+    Lee el valor TOTAL INGRESOS POR POTENCIA FIRME CLP.
+
+    Fuente principal (si hay nombre_empresa): BDef Detalle en 07. Detalle por empresa,
+    hoja "Balance2". Detecta dinámicamente columnas Empresa, Concepto y Pago PSUF.
+    Si concepto_filtro está definido (ej: ["Eólica"] desde config POTENCIA_FIRME),
+    solo suma filas donde Concepto coincida.
+
+    Fallback: Anexo 02.b Potencia, hoja "01.BALANCE POTENCIA {Mes}-{Year} def".
 
     Args:
         anyo: Año
         mes: Mes (1-12)
         nombre_empresa: Nombre de la empresa (ej: VIENTOS_DE_RENAICO). Si vacío, usa fallback.
         carpeta_base: Carpeta base donde buscar (por defecto "bd_data")
+        concepto_filtro: Lista de conceptos (ej: ["Eólica"]) o string único. Desde config POTENCIA_FIRME.
 
     Returns:
         Valor en CLP, None si no se encuentra
     """
+    # Normalizar concepto_filtro a lista
+    concepto_lista = None
+    if concepto_filtro is not None:
+        if isinstance(concepto_filtro, str) and concepto_filtro.strip():
+            concepto_lista = [concepto_filtro.strip()]
+        elif isinstance(concepto_filtro, (list, tuple)):
+            concepto_lista = [str(c).strip() for c in concepto_filtro if str(c).strip()]
+
+    # 1) Prioridad: BDef Detalle (07. Detalle por empresa, hoja Balance2) - detección dinámica de columnas
+    if nombre_empresa and nombre_empresa.strip():
+        archivo_bdef = encontrar_archivo_bdef_detalle(anyo, mes, carpeta_base)
+        if archivo_bdef is not None:
+            valor = _leer_total_ingresos_potencia_firme_bdef_detalle(
+                archivo_bdef,
+                nombre_empresa.strip(),
+                nombre_hoja="Balance2",
+                concepto_filtro=concepto_lista,
+            )
+            if valor is not None:
+                filtro_info = f", Concepto={concepto_lista}" if concepto_lista else ""
+                print(
+                    f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo_bdef.name} "
+                    f"(07. Detalle por empresa, hoja Balance2{filtro_info})"
+                )
+                print(
+                    f"  -> Dato obtenido ({nombre_empresa}, Pago PSUF suma): {valor:,.2f}"
+                )
+                return valor
+            # BDef encontrado pero no devolvió valor (revisar WARNING anteriores)
+            if concepto_lista:
+                print(
+                    f"[INFO] BDef Detalle no devolvió dato con filtro Concepto={concepto_lista}. "
+                    "Usando fallback Anexo 02.b (suma total, sin filtro por concepto)"
+                )
+
+    # 2) Fallback: Anexo 02.b Potencia
     archivo = encontrar_archivo_anexo_potencia(anyo, mes, carpeta_base)
     if archivo is None:
         print(f"[WARNING] No se encontró Anexo 02.b Potencia para {mes}/{anyo}")
@@ -1171,20 +1585,20 @@ def leer_total_ingresos_potencia_firme(
     if nombre_hoja is None:
         nombre_hoja = f"01.BALANCE POTENCIA {MESES_ANEXO_POTENCIA.get(mes, 'Dic')}-{str(anyo)[-2:]} def"
 
-    if nombre_empresa:
+    if nombre_empresa and nombre_empresa.strip():
         valor = leer_total_ingresos_potencia_firme_anexo(
             archivo, nombre_hoja, nombre_empresa
         )
         if valor is not None:
             print(
-                f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo.name}"
+                f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo.name} (fallback Anexo 02.b)"
             )
             print(
                 f"  -> Dato obtenido ({nombre_empresa}, col TOTAL): {valor:,.2f}"
             )
         return valor
 
-    # Fallback: buscar por texto "TOTAL INGRESOS POR POTENCIA FIRME CLP"
+    # Fallback sin empresa: buscar por texto "TOTAL INGRESOS POR POTENCIA FIRME CLP"
     print(f"[INFO] Leyendo TOTAL INGRESOS POR POTENCIA FIRME CLP desde: {archivo.name}")
     valor = leer_valor_concepto_anexo_xlsb(
         archivo,

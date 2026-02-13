@@ -1,0 +1,24 @@
+=====================================================
+  GENERADOR DE INFORME ELECTRICO
+=====================================================
+
+REQUISITOS:
+  - Windows 10 o superior
+  - Python 3.8 o superior (https://www.python.org/downloads/)
+  - Microsoft Excel instalado
+  - Conexion a Internet
+
+INSTALACION DE PYTHON:
+  Al instalar Python, marque la opcion "Add Python to PATH"
+
+USO:
+  1. Doble clic en "ejecutar.bat"
+  2. La primera vez instalara las dependencias (puede tardar 1-2 min)
+  3. Se abrira la ventana del programa
+  4. Seleccione Ano, Mes, Empresa, Barra
+  5. Elija plantilla y destino del informe
+  6. Clic en "Crear Informe"
+
+NOTA: Ejecutar como script evita problemas de corrupcion
+de archivos Excel que ocurren con el .exe empaquetado.
+

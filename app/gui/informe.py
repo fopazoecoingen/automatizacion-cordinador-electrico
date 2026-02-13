@@ -365,10 +365,10 @@ class InterfazInforme:
         file_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
         file_frame.pack(fill=tk.X, padx=32, pady=(8, 16))
 
-        # Plantilla base del cliente
+        # Plantilla: el cliente ingresa la suya
         self.create_file_input(
             file_frame,
-            "Plantilla base del cliente",
+            "Su plantilla Excel (ingrese ruta o use Examinar)",
             "",
             0,
             modo="open",
@@ -417,7 +417,7 @@ class InterfazInforme:
             entry.insert(0, default_path)
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
 
-        if label_text.startswith("Plantilla"):
+        if "plantilla" in label_text.lower():
             self.plantilla_entry = entry
         elif label_text.startswith("Ruta de destino"):
             self.destino_entry = entry
@@ -444,7 +444,7 @@ class InterfazInforme:
         """Abrir diálogo de selección de archivo."""
         if modo == "open":
             filename = filedialog.askopenfilename(
-                title="Seleccionar plantilla",
+                title="Seleccionar su plantilla Excel",
                 defaultextension=".xlsx",
                 filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
             )
@@ -568,7 +568,7 @@ class InterfazInforme:
         ruta_destino = ruta_destino_entry.get().strip() if ruta_destino_entry else ""
 
         if not ruta_plantilla:
-            messagebox.showerror("Error", "Por favor seleccione la plantilla base del cliente.")
+            messagebox.showerror("Error", "Por favor ingrese o seleccione su plantilla Excel.")
             return
 
         if not ruta_destino:

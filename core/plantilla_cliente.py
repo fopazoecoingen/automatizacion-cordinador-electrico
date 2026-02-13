@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from copy import copy
 from datetime import datetime, date
 from pathlib import Path
@@ -48,18 +49,18 @@ EXCLUIR_AL_BUSCAR = {
 def _ruta_local_para_excel(ruta: Path) -> Tuple[Path, bool]:
     """
     Retorna (ruta_a_usar, usar_temp).
-    Cuando es ejecutable o la ruta puede dar problemas con Excel COM, trabaja en
-    una carpeta local temporal y luego copia el resultado.
+    Solo usa temp cuando la ruta da problemas con Excel COM (OneDrive, red, etc.).
+    Trabajar directo en la ruta evita corrupción al copiar desde temp.
     """
     ruta_abs = ruta.resolve()
     ruta_str = str(ruta_abs).lower()
-    # Ejecutable: Excel suele fallar con rutas externas
+    # Ejecutable: siempre usar temp (Excel COM falla con rutas cuando corre desde .exe)
     es_ejecutable = getattr(sys, "frozen", False)
-    # Rutas que suelen causar "Error en el método" (-2147352567) con Excel COM
+    # Rutas problemáticas: OneDrive, red, descargas
     ruta_problemática = (
         "onedrive" in ruta_str or
         "google drive" in ruta_str or
-        ruta_str.startswith("\\\\") or  # Rutas de red
+        ruta_str.startswith("\\\\") or
         "\\downloads\\" in ruta_str or
         "\\descargas\\" in ruta_str or
         ruta_str.endswith("\\downloads") or
@@ -67,9 +68,10 @@ def _ruta_local_para_excel(ruta: Path) -> Tuple[Path, bool]:
     )
     problemáticas = es_ejecutable or ruta_problemática
     if problemáticas:
+        import uuid
         temp_dir = Path(tempfile.gettempdir()) / "GeneradorInformeElectrico"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        temp_file = temp_dir / ruta.name
+        temp_file = temp_dir / f"{ruta.stem}_{uuid.uuid4().hex[:8]}{ruta.suffix}"
         shutil.copy2(ruta_abs, temp_file)
         return temp_file, True
     return ruta_abs, False
@@ -396,8 +398,15 @@ def _escribir_todos_con_win32(
     """Escribe todos los conceptos en una sola sesión Excel (evita múltiples open/close que fallan en el exe)."""
     import win32com.client as win32
 
+    # Inicializar COM (necesario cuando se ejecuta desde .exe empaquetado)
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except ImportError:
+        pass
+
     ruta_trabajo, usar_temp = _ruta_local_para_excel(ruta)
-    ruta_abrir = str(ruta_trabajo)
+    ruta_abrir = str(ruta_trabajo.resolve())
 
     excel = win32.DispatchEx("Excel.Application")
     excel.Visible = False
@@ -542,23 +551,18 @@ def _escribir_todos_con_win32(
 
             ws.Cells(fila_concepto, col_mes).Value = float(total_monetario)
 
-        if usar_temp:
-            # SaveAs con FileFormat explícito reduce corrupción de drawing.xml
-            temp_save = ruta_trabajo.parent / (ruta_trabajo.stem + "_out" + ruta_trabajo.suffix)
-            wb.SaveAs(str(temp_save), FileFormat=XL_OPEN_XML_WORKBOOK)
-            wb.Close(SaveChanges=False)
-            shutil.copy2(temp_save, ruta.resolve())
-            try:
-                temp_save.unlink(missing_ok=True)
-            except OSError:
-                pass
-        else:
-            wb.Save()
-            wb.Close(SaveChanges=True)
+        wb.Save()
+        wb.Close(SaveChanges=True)
     finally:
-        excel.ScreenUpdating = True
-        excel.Quit()
-        excel.DisplayAlerts = True
+        try:
+            excel.ScreenUpdating = True
+            excel.DisplayAlerts = True
+            excel.Quit()
+        except Exception:
+            pass
+        time.sleep(0.5)  # Dar tiempo a Excel para liberar el archivo
+        if usar_temp:
+            shutil.copy2(ruta_trabajo, ruta.resolve())
 
 
 def escribir_total_en_resultado(

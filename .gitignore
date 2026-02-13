@@ -80,6 +80,10 @@ dist/
 !GeneradorInforme.spec
 *.exe
 
-# Paquetes de distribución
+# Paquetes de distribución (regenerables con crear_ejecutable.bat)
 Paquete Distribucion/
+Generador_Informe_Electrico_Portable/
 Generador_Informe_Electrico.zip
+Generador_Informe_Electrico_Portable.zip
+WinPython64-3.13.11.0dot_post1.zip
+temp_winpy/

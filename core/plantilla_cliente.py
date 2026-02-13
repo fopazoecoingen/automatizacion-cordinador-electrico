@@ -15,6 +15,35 @@ from typing import Tuple, Union
 # Constante Excel: pegar solo formatos (evita copiar fechas/valores indeseados)
 XL_PASTE_FORMATS = -4122
 
+# Variantes de nombres que pueden aparecer en plantillas de clientes.
+# ATENCIÓN: INGRESOS POR POTENCIA, INGRESOS POR IT POTENCIA y TOTAL INGRESOS POR POTENCIA FIRME CLP
+# son conceptos distintos; cada uno escribe en su propia fila.
+VARIANTES_CONCEPTOS = {
+    "INGRESOS POR IT POTENCIA": [
+        "IT POTENCIA",
+        "INGRESOS IT POTENCIA",
+        "02. IT POTENCIA",
+        "INGRESOS POR IT",
+        "IT Potencia",
+        "Ingresos por IT Potencia",
+        "IT/POTENCIA",
+        "IT-POTENCIA",
+        "POR IT POTENCIA",
+        "ASIGNACION IT POTENCIA",
+    ],
+    "INGRESOS POR POTENCIA": [
+        "INGRESOS POTENCIA",
+        "01. INGRESOS POR POTENCIA",
+        "Ingresos por Potencia",
+        "POR POTENCIA",
+    ],
+}
+# Al buscar cada concepto, se excluyen celdas que contengan estos textos.
+# Así no se confunde INGRESOS POR POTENCIA con TOTAL INGRESOS POR POTENCIA FIRME CLP (son distintos).
+EXCLUIR_AL_BUSCAR = {
+    "INGRESOS POR POTENCIA": ["FIRME"],
+}
+
 
 def _ruta_local_para_excel(ruta: Path) -> Tuple[Path, bool]:
     """
@@ -77,7 +106,8 @@ def _escribir_con_win32(
         ws = ws_resultado
 
         used_range = ws.UsedRange
-        max_row = max(used_range.Rows.Count, 50)
+        # +20 margen: UsedRange puede no incluir la última fila; el concepto puede estar al borde
+        max_row = max(used_range.Rows.Count, 50) + 20
         max_col = max(used_range.Columns.Count, 30)
 
         meses_abrev = {
@@ -166,27 +196,38 @@ def _escribir_con_win32(
             col_mes = new_col
 
         fila_concepto = None
-        texto_concepto_upper = texto_concepto.upper()
+        textos_a_buscar = [texto_concepto] + VARIANTES_CONCEPTOS.get(texto_concepto, [])
+        excluir = EXCLUIR_AL_BUSCAR.get(texto_concepto, [])
 
-        for col_concepto in (2, 1):
-            for r in range(1, max_row + 1):
-                raw = ws.Cells(r, col_concepto).Value
-                if raw is None:
-                    continue
-                if texto_concepto_upper in str(raw).strip().upper():
-                    fila_concepto = r
+        def _celda_valida(val: str) -> bool:
+            val_upper = val.upper()
+            if any(ex.upper() in val_upper for ex in excluir):
+                return False
+            return True
+
+        for texto_buscar in textos_a_buscar:
+            texto_upper = texto_buscar.upper()
+            for col_concepto in (2, 1, 3, 4):  # B, A, C, D
+                for r in range(1, max_row + 1):
+                    raw = ws.Cells(r, col_concepto).Value
+                    if raw is None:
+                        continue
+                    val = str(raw).strip().upper()
+                    if texto_upper in val and _celda_valida(val):
+                        fila_concepto = r
+                        break
+                if fila_concepto is not None:
                     break
             if fila_concepto is not None:
                 break
 
         if fila_concepto is None:
-            print(
-                f"[WARNING] Concepto no encontrado en plantilla: '{texto_concepto}'. "
-                "Omitiendo (la plantilla puede tener otra estructura)."
-            )
             wb.Close(SaveChanges=False)
             excel.Quit()
-            return
+            raise RuntimeError(
+                f"No se encontró el campo '{texto_concepto}' en la hoja Resultado (columnas A-D). "
+                "Revise el nombre exacto en la plantilla y añádalo en VARIANTES_CONCEPTOS en plantilla_cliente.py."
+            )
 
         ws.Cells(fila_concepto, col_mes).Value = float(total_monetario)
         wb.Save()
@@ -255,7 +296,8 @@ def _escribir_con_openpyxl(
         wb.close()
         raise RuntimeError("No se encontró la hoja 'Resultado' en la plantilla.")
 
-    max_row = max(ws.max_row, 50)
+    # +20 margen: conceptos al final de la hoja pueden quedar fuera si max_row no los incluye
+    max_row = max(ws.max_row, 50) + 20
     max_col = max(ws.max_column, 30)
     fila_encabezados_max = min(15, max_row)
 
@@ -306,23 +348,34 @@ def _escribir_con_openpyxl(
             col_mes = col_ins
 
     fila_concepto = None
-    texto_upper = texto_concepto.upper()
-    for col_concepto in (2, 1):
-        for r in range(1, max_row + 1):
-            raw = ws.cell(row=r, column=col_concepto).value
-            if raw and texto_upper in str(raw).strip().upper():
-                fila_concepto = r
+    textos_a_buscar = [texto_concepto] + VARIANTES_CONCEPTOS.get(texto_concepto, [])
+    excluir = EXCLUIR_AL_BUSCAR.get(texto_concepto, [])
+
+    def _celda_valida(val: str) -> bool:
+        val_upper = val.upper()
+        return not any(ex.upper() in val_upper for ex in excluir)
+
+    for texto_buscar in textos_a_buscar:
+        texto_upper = texto_buscar.upper()
+        for col_concepto in (2, 1, 3, 4):  # B, A, C, D
+            for r in range(1, max_row + 1):
+                raw = ws.cell(row=r, column=col_concepto).value
+                if raw:
+                    val = str(raw).strip().upper()
+                    if texto_upper in val and _celda_valida(val):
+                        fila_concepto = r
+                        break
+            if fila_concepto is not None:
                 break
         if fila_concepto is not None:
             break
 
     if fila_concepto is None:
-        print(
-            f"[WARNING] Concepto no encontrado en plantilla: '{texto_concepto}'. "
-            "Omitiendo (la plantilla puede tener otra estructura)."
-        )
         wb.close()
-        return
+        raise RuntimeError(
+            f"No se encontró el campo '{texto_concepto}' en la hoja Resultado (columnas A-D). "
+            "Revise el nombre exacto en la plantilla y añádalo en VARIANTES_CONCEPTOS en plantilla_cliente.py."
+        )
 
     ws.cell(row=fila_concepto, column=col_mes).value = float(total_monetario)
     wb.save(str(ruta))

@@ -286,7 +286,7 @@ def descomprimir_zip(ruta_zip, carpeta_destino=None, nombre_carpeta=None, mostra
             # Verificar si tiene contenido
             contenido = list(carpeta_destino.iterdir())
             if contenido:
-                print(f"✓ El archivo ya está descomprimido: {carpeta_destino}")
+                print(f"[OK] El archivo ya está descomprimido: {carpeta_destino}")
                 return str(carpeta_destino)
 
         # Crear carpeta destino
@@ -310,7 +310,7 @@ def descomprimir_zip(ruta_zip, carpeta_destino=None, nombre_carpeta=None, mostra
             if mostrar_progreso:
                 barra.close()
 
-        print(f"✓ Descompresión completada: {carpeta_destino}")
+        print(f"[OK] Descompresión completada: {carpeta_destino}")
         return str(carpeta_destino)
 
     except zipfile.BadZipFile:
@@ -388,7 +388,7 @@ def descargar_zip_si_no_existe(anyo, mes, carpeta_zip="bd_data"):
 
     if archivo_existente:
         tamaño = archivo_existente.stat().st_size / (1024 * 1024)  # Tamaño en MB
-        print(f"✓ El archivo ya existe: {archivo_existente}")
+        print(f"[OK] El archivo ya existe: {archivo_existente}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(archivo_existente), None
 
@@ -399,7 +399,7 @@ def descargar_zip_si_no_existe(anyo, mes, carpeta_zip="bd_data"):
     # Verificar también el nombre exacto (por si acaso)
     if ruta_archivo.exists():
         tamaño = ruta_archivo.stat().st_size / (1024 * 1024)  # Tamaño en MB
-        print(f"✓ El archivo ya existe: {ruta_archivo}")
+        print(f"[OK] El archivo ya existe: {ruta_archivo}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(ruta_archivo), None
 
@@ -411,7 +411,7 @@ def descargar_zip_si_no_existe(anyo, mes, carpeta_zip="bd_data"):
 
     if exito:
         tamaño = ruta_archivo.stat().st_size / (1024 * 1024)  # Tamaño en MB
-        print(f"✓ Descarga completada: {ruta_archivo}")
+        print(f"[OK] Descarga completada: {ruta_archivo}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(ruta_archivo), None
     else:
@@ -443,7 +443,7 @@ def descargar_zip_tipo_si_no_existe(anyo, mes, tipo, carpeta_zip="bd_data", most
 
     if archivo_existente:
         tamaño = archivo_existente.stat().st_size / (1024 * 1024)  # MB
-        print(f"✓ El archivo ya existe ({TIPOS_ARCHIVO.get(tipo, tipo)}): {archivo_existente.name}")
+        print(f"[OK] El archivo ya existe ({TIPOS_ARCHIVO.get(tipo, tipo)}): {archivo_existente.name}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(archivo_existente), None
 
@@ -452,7 +452,7 @@ def descargar_zip_tipo_si_no_existe(anyo, mes, tipo, carpeta_zip="bd_data", most
 
     if ruta_archivo.exists():
         tamaño = ruta_archivo.stat().st_size / (1024 * 1024)
-        print(f"✓ El archivo ya existe: {ruta_archivo}")
+        print(f"[OK] El archivo ya existe: {ruta_archivo}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(ruta_archivo), None
 
@@ -461,7 +461,7 @@ def descargar_zip_tipo_si_no_existe(anyo, mes, tipo, carpeta_zip="bd_data", most
 
     if exito:
         tamaño = ruta_archivo.stat().st_size / (1024 * 1024)
-        print(f"✓ Descarga completada: {ruta_archivo}")
+        print(f"[OK] Descarga completada: {ruta_archivo}")
         print(f"  Tamaño: {tamaño:.2f} MB")
         return str(ruta_archivo), None
     else:

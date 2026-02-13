@@ -236,7 +236,7 @@ class InterfazDescarga:
                 desc = TIPOS_ARCHIVO.get(tipo, tipo)
                 if archivo:
                     tamaño = archivo.stat().st_size / (1024 * 1024)
-                    lineas.append(f"  ✓ {desc}: {tamaño:.2f} MB")
+                    lineas.append(f"  [OK] {desc}: {tamaño:.2f} MB")
                 else:
                     lineas.append(f"  ✗ {desc}: no encontrado")
                     todos_existen = False
@@ -339,17 +339,17 @@ class InterfazDescarga:
                 self.root.after(
                     0,
                     lambda: self.progress_label.config(
-                        text="✓ Descarga y descompresión completadas"
+                        text="[OK] Descarga y descompresión completadas"
                     ),
                 )
 
                 # Construir mensaje con todos los archivos descargados
-                lineas_info = [f"✓ Archivos disponibles: {nombre_mes} {anyo}"]
+                lineas_info = [f"[OK] Archivos disponibles: {nombre_mes} {anyo}"]
                 lineas_final = []
                 for t, ruta_zip, ruta_des, _ in exitosos:
                     desc = TIPOS_ARCHIVO.get(t, t)
                     tamaño_zip = Path(ruta_zip).stat().st_size / (1024 * 1024)
-                    lineas_info.append(f"  ✓ {desc}: {tamaño_zip:.2f} MB")
+                    lineas_info.append(f"  [OK] {desc}: {tamaño_zip:.2f} MB")
                     lineas_final.append(f"{desc}: {Path(ruta_zip).name}")
                     if ruta_des:
                         lineas_final.append(f"  Descomprimido: {Path(ruta_des).name}")

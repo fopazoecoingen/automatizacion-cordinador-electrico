@@ -30,7 +30,7 @@ from core.leer_excel import (
     leer_total_ingresos_potencia_firme,
     leer_total_ingresos_sscc,
 )
-from core.plantilla_cliente import escribir_total_en_resultado
+from core.plantilla_cliente import escribir_todos_en_resultado
 
 
 # Paleta de colores profesional - Sector energético
@@ -616,7 +616,7 @@ class InterfazInforme:
             self.root.after(
                 0,
                 lambda: self.progress_text_label.config(
-                    text="✓ Proceso completado"
+                    text="[OK] Proceso completado"
                 ),
             )
 
@@ -693,7 +693,7 @@ class InterfazInforme:
                 self.root.after(
                     0,
                     lambda: self.progress_text_label.config(
-                        text="✓ Base de datos interna lista"
+                        text="[OK] Base de datos interna lista"
                     ),
                 )
 
@@ -720,7 +720,7 @@ class InterfazInforme:
                     self.root.after(
                         0,
                         lambda ma=mes_actual, tm=total_meses, ae=archivo_existente: self.progress_text_label.config(
-                            text=f"[{ma}/{tm}] ✓ {ae.name} (ya existe)"
+                            text=f"[{ma}/{tm}] [OK] {ae.name} (ya existe)"
                         ),
                     )
 
@@ -738,7 +738,7 @@ class InterfazInforme:
                     self.root.after(
                         0,
                         lambda ma=mes_actual, tm=total_meses, rz=ruta_zip, d=desc: self.progress_text_label.config(
-                            text=f"[{ma}/{tm}] ✓ {d}: {Path(rz).name}"
+                            text=f"[{ma}/{tm}] [OK] {d}: {Path(rz).name}"
                         ),
                     )
 
@@ -804,7 +804,7 @@ class InterfazInforme:
                 0,
                 lambda: self.progress_text_label.config(
                     text=(
-                        f"[{mes_actual}/{total_meses}] ✓ Balance encontrado: "
+                        f"[{mes_actual}/{total_meses}] [OK] Balance encontrado: "
                         f"{lector.ruta_archivo.name}"
                     )
                 ),
@@ -830,7 +830,7 @@ class InterfazInforme:
                 0,
                 lambda: self.progress_text_label.config(
                     text=(
-                        f"[{mes_actual}/{total_meses}] ✓ Datos leídos: "
+                        f"[{mes_actual}/{total_meses}] [OK] Datos leídos: "
                         f"{len(df_balance)} filas"
                     )
                 ),
@@ -958,41 +958,18 @@ class InterfazInforme:
                 print(f"[INFO] TOTAL INGRESOS POR POTENCIA FIRME CLP: {total_monetario:,.2f}")
 
             datos_encontrados["TOTAL INGRESOS POR POTENCIA FIRME CLP"] = total_monetario
-            escribir_total_en_resultado(
-                ruta_destino,
-                anyo,
-                mes,
-                total_monetario,
-                texto_concepto="TOTAL INGRESOS POR POTENCIA FIRME CLP",
-            )
 
             # INGRESOS POR IT POTENCIA: Anexo 02.b Potencia, hoja 02.IT POTENCIA {Mes}-{YY} def
             total_it = leer_ingresos_por_it(
                 anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
             )
             datos_encontrados["INGRESOS POR IT POTENCIA"] = total_it
-            if total_it is not None:
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    total_it,
-                    texto_concepto="INGRESOS POR IT POTENCIA",
-                )
 
             # INGRESOS POR POTENCIA: Anexo 02.b Potencia, hoja 01.BALANCE POTENCIA {Mes}-{YY} def
             total_potencia = leer_ingresos_por_potencia(
                 anyo, mes, nombre_empresa=nombre_empresa, carpeta_base=str(carpeta_bd)
             )
             datos_encontrados["INGRESOS POR POTENCIA"] = total_potencia
-            if total_potencia is not None:
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    total_potencia,
-                    texto_concepto="INGRESOS POR POTENCIA",
-                )
 
             # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
             # Usa filtro nombre_medidor si aplica
@@ -1005,15 +982,9 @@ class InterfazInforme:
                     f"[INFO] TOTAL INGRESOS POR ENERGIA CLP para {nombre_mes} {anyo}: "
                     f"{total_energia:,.2f} (Balance Valorizado, col monetario)"
                 )
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    total_energia,
-                    texto_concepto="TOTAL INGRESOS POR ENERGIA CLP",
-                )
             else:
                 datos_encontrados["TOTAL INGRESOS POR ENERGIA CLP"] = None
+                total_energia = None
 
             # TOTAL INGRESOS POR SSCC CLP: EXCEL 1_CUADROS_PAGO_SSCC, hoja CPI_
             # Filtra por Nemotecnico Deudor = empresa, suma columna Monto
@@ -1022,14 +993,6 @@ class InterfazInforme:
                 if nombre_empresa else None
             )
             datos_encontrados["TOTAL INGRESOS POR SSCC CLP"] = total_sscc
-            if nombre_empresa and total_sscc is not None:
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    total_sscc,
-                    texto_concepto="TOTAL INGRESOS POR SSCC CLP",
-                )
 
             # Compra Venta Energia GM Holdings CLP: Balance, hoja Contratos, columna VENTA[CLP]
             total_gm_holdings = leer_compra_venta_energia_gm_holdings(
@@ -1039,14 +1002,6 @@ class InterfazInforme:
                 carpeta_base=str(carpeta_bd),
             )
             datos_encontrados["Compra Venta Energia GM Holdings CLP"] = total_gm_holdings
-            if total_gm_holdings is not None:
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    total_gm_holdings,
-                    texto_concepto="Compra Venta Energia GM Holdings CLP",
-                )
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
             # Usa filtro nombre_medidor si aplica
@@ -1061,16 +1016,28 @@ class InterfazInforme:
                     f"{importacion_mwh:,.2f} (desde {total_fisico_kwh:,.0f} kWh)"
                 )
                 print(f"  -> Dato obtenido (IMPORTACION MWh): {importacion_mwh:,.2f}")
-                escribir_total_en_resultado(
-                    ruta_destino,
-                    anyo,
-                    mes,
-                    importacion_mwh,
-                    texto_concepto="IMPORTACION MWh",
-                )
             else:
                 print("[WARNING] No se encontró la columna 'fisico_kwh' en Balance Valorizado")
             datos_encontrados["IMPORTACION MWh"] = importacion_mwh
+
+            # Escribir todos los conceptos en una sola sesión Excel (evita errores COM en el ejecutable)
+            pares_escribir = [
+                ("TOTAL INGRESOS POR POTENCIA FIRME CLP", total_monetario),
+            ]
+            if total_it is not None:
+                pares_escribir.append(("INGRESOS POR IT POTENCIA", total_it))
+            if total_potencia is not None:
+                pares_escribir.append(("INGRESOS POR POTENCIA", total_potencia))
+            if total_energia is not None:
+                pares_escribir.append(("TOTAL INGRESOS POR ENERGIA CLP", total_energia))
+            if nombre_empresa and total_sscc is not None:
+                pares_escribir.append(("TOTAL INGRESOS POR SSCC CLP", total_sscc))
+            if total_gm_holdings is not None:
+                pares_escribir.append(("Compra Venta Energia GM Holdings CLP", total_gm_holdings))
+            if importacion_mwh is not None:
+                pares_escribir.append(("IMPORTACION MWh", importacion_mwh))
+
+            escribir_todos_en_resultado(ruta_destino, anyo, mes, pares_escribir)
 
             # Print resumen de todos los datos encontrados
             print("\n" + "=" * 60)
@@ -1093,7 +1060,7 @@ class InterfazInforme:
                 0,
                 lambda: self.progress_text_label.config(
                     text=(
-                        f"[{mes_actual}/{total_meses}] ✓ Guardado en hoja Resultado "
+                        f"[{mes_actual}/{total_meses}] [OK] Guardado en hoja Resultado "
                         f"para {nombre_mes} {anyo}"
                     )
                 ),

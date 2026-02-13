@@ -75,6 +75,13 @@ if exist "plantilla_base.xlsx" (
     echo   [ADVERTENCIA] plantilla_base.xlsx no encontrado - el cliente debera tener su propia plantilla
 )
 
+if exist "config_empresas.json" (
+    copy "config_empresas.json" "Paquete Distribucion\" >nul
+    echo   [OK] config_empresas.json
+) else (
+    echo   [ADVERTENCIA] config_empresas.json no encontrado - el cliente tendra que escribir Empresa/Barra/Medidor manualmente
+)
+
 echo.
 echo Creando README para el usuario final...
 (
@@ -91,7 +98,7 @@ echo INSTRUCCIONES DE USO:
 echo.
 echo 1. Ejecute "Generador Informe Electrico.exe"
 echo 2. Seleccione Ano y Mes del informe
-echo 3. Complete Empresa, Barra y Nombre Medidor ^(si aplica^)
+echo 3. Seleccione Empresa, Barra y Nombre Medidor de la lista ^(o escriba manualmente si aplica^)
 echo 4. Seleccione la plantilla base del cliente
 echo 5. Elija la ruta de destino donde guardar el informe
 echo 6. Haga clic en "Crear Informe"

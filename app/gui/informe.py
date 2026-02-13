@@ -95,13 +95,29 @@ class InterfazInforme:
         """Ruta del archivo JSON con los últimos datos ingresados."""
         return _directorio_base_datos() / "config_ultimos_datos.json"
 
+    def _ruta_config_empresas(self) -> Path:
+        """Ruta del archivo JSON con empresas preconfiguradas."""
+        return _directorio_base_datos() / "config_empresas.json"
+
+    def _cargar_config_empresas(self) -> list:
+        """Carga la lista de empresas desde config_empresas.json."""
+        try:
+            ruta = self._ruta_config_empresas()
+            if not ruta.exists():
+                return []
+            with open(ruta, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("empresas", [])
+        except Exception as e:
+            print(f"[WARNING] No se pudo cargar config_empresas.json: {e}")
+            return []
+
     def _guardar_ultimos_datos(
         self,
         anyo: int,
         mes: int,
         empresa: str,
         barra: str,
-        nombre_medidor: str,
         plantilla: str,
         destino: str,
     ) -> None:
@@ -112,7 +128,6 @@ class InterfazInforme:
                 "mes": mes,
                 "empresa": empresa,
                 "barra": barra,
-                "nombre_medidor": nombre_medidor,
                 "plantilla": plantilla,
                 "destino": destino,
             }
@@ -136,14 +151,10 @@ class InterfazInforme:
                 if 1 <= mes <= 12:
                     self.mes_combo.current(mes - 1)
             if datos.get("empresa") is not None and "Empresa" in self.entries:
-                self.entries["Empresa"].delete(0, tk.END)
-                self.entries["Empresa"].insert(0, str(datos["empresa"]))
+                self.entries["Empresa"].set(str(datos["empresa"]))
+                self._on_empresa_seleccionada()
             if datos.get("barra") is not None and "Barra" in self.entries:
-                self.entries["Barra"].delete(0, tk.END)
-                self.entries["Barra"].insert(0, str(datos["barra"]))
-            if datos.get("nombre_medidor") is not None and "Nombre Medidor" in self.entries:
-                self.entries["Nombre Medidor"].delete(0, tk.END)
-                self.entries["Nombre Medidor"].insert(0, str(datos["nombre_medidor"]))
+                self.entries["Barra"].set(str(datos["barra"]))
             if datos.get("plantilla") and hasattr(self, "plantilla_entry"):
                 self.plantilla_entry.delete(0, tk.END)
                 self.plantilla_entry.insert(0, str(datos["plantilla"]))
@@ -267,7 +278,7 @@ class InterfazInforme:
         periodo_frame.grid_columnconfigure(0, weight=1)
 
     def create_config_section(self) -> None:
-        """Crear sección de configuración con inputs de texto."""
+        """Crear sección de configuración con combobox cargados desde config_empresas.json."""
         config_frame = tk.Frame(self.main_panel, bg=COLORS["bg_card"])
         config_frame.pack(fill=tk.X, padx=32, pady=(8, 16))
 
@@ -281,12 +292,14 @@ class InterfazInforme:
         )
         titulo_config.grid(row=0, column=0, columnspan=3, padx=0, pady=(0, 8), sticky="w")
 
-        labels = ["Empresa", "Barra", "Nombre Medidor"]
-        default_values = ["VIENTOS_DE_RENAICO", "", ""]
+        self.config_empresas = self._cargar_config_empresas()
+        nombres_empresas = list({e.get("nombreEmpresa", "") for e in self.config_empresas if e.get("nombreEmpresa")})
+        nombres_empresas.sort()
 
+        labels = ["Empresa", "Barra"]
         self.entries = {}
 
-        for i, (label, default) in enumerate(zip(labels, default_values)):
+        for i, label in enumerate(labels):
             lbl = tk.Label(
                 config_frame,
                 text=label,
@@ -297,31 +310,55 @@ class InterfazInforme:
             )
             lbl.grid(row=1, column=i, padx=(0, 8), pady=(0, 4), sticky="w")
 
-            entry = tk.Entry(
+            values = nombres_empresas if label == "Empresa" else [""]
+            combo = ttk.Combobox(
                 config_frame,
-                width=28,
+                width=26,
                 font=("Segoe UI", 10),
-                relief=tk.SOLID,
-                bd=1,
-                fg=COLORS["text_primary"],
+                values=values,
             )
-            if default:
-                entry.insert(0, default)
-            entry.grid(row=2, column=i, padx=(0, 24 if i < 2 else 0), pady=(0, 0), sticky="ew")
-            self.entries[label] = entry
+            combo.grid(row=2, column=i, padx=(0, 24 if i < 2 else 0), pady=(0, 0), sticky="ew")
+            self.entries[label] = combo
 
-        for i in range(3):
+            if label == "Empresa":
+                combo.bind("<<ComboboxSelected>>", self._on_empresa_seleccionada)
+
+        for i in range(2):
             config_frame.grid_columnconfigure(i, weight=1)
 
         nota_label = tk.Label(
             config_frame,
-            text="Barra vacío = todas. Nombre Medidor aplica solo a IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP.",
+            text="",
             bg=COLORS["bg_card"],
             font=("Segoe UI", 9),
             fg=COLORS["text_muted"],
             anchor="w",
         )
-        nota_label.grid(row=3, column=0, columnspan=3, padx=0, pady=(8, 0), sticky="w")
+        nota_label.grid(row=3, column=0, columnspan=2, padx=0, pady=(8, 0), sticky="w")
+
+    def _on_empresa_seleccionada(self, event=None) -> None:
+        """Al seleccionar una empresa, rellena Barra desde config (Barra/Barras)."""
+        nombre_empresa = self.entries["Empresa"].get().strip()
+        if not nombre_empresa or not self.config_empresas:
+            self.entries["Barra"].config(values=[""])
+            return
+        empresa = next(
+            (e for e in self.config_empresas if str(e.get("nombreEmpresa", "")).strip() == nombre_empresa),
+            None,
+        )
+        if not empresa:
+            self.entries["Barra"].config(values=[""])
+            return
+        barras_raw = empresa.get("Barras") or empresa.get("Barra")
+        if isinstance(barras_raw, list):
+            barras = [str(b).strip() for b in barras_raw if str(b).strip()]
+        elif barras_raw:
+            barras = [str(barras_raw).strip()]
+        else:
+            barras = []
+        vals_barra = [""] + barras
+        self.entries["Barra"].config(values=vals_barra)
+        self.entries["Barra"].set(barras[0] if barras else "")
 
     def create_file_section(self) -> None:
         """Crear sección de selección de archivos (plantilla y archivo de salida)."""
@@ -543,7 +580,12 @@ class InterfazInforme:
 
         nombre_barra = self.entries["Barra"].get().strip()
         nombre_empresa = self.entries["Empresa"].get().strip()
-        nombre_medidor = self.entries["Nombre Medidor"].get().strip()
+
+        # Obtener medidores desde config (IMPORTACION_MWh y TOTAL_INGRESOS_POR_ENERGIA_CLP)
+        empresa_config = next(
+            (e for e in self.config_empresas if str(e.get("nombreEmpresa", "")).strip() == nombre_empresa),
+            None,
+        )
 
         # Guardar últimos datos para próxima ejecución
         self._guardar_ultimos_datos(
@@ -551,7 +593,6 @@ class InterfazInforme:
             mes=mes,
             empresa=nombre_empresa,
             barra=nombre_barra,
-            nombre_medidor=nombre_medidor,
             plantilla=ruta_plantilla,
             destino=ruta_destino,
         )
@@ -571,7 +612,7 @@ class InterfazInforme:
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
-                nombre_medidor,
+                empresa_config,
                 tipos_a_descargar,
             ),
             daemon=True,
@@ -586,7 +627,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
-        nombre_medidor: str,
+        empresa_config: dict | None,
         tipos_seleccionados: list,
     ) -> None:
         """Procesar el informe en un hilo separado para un mes específico."""
@@ -602,7 +643,7 @@ class InterfazInforme:
                 ruta_destino,
                 nombre_barra,
                 nombre_empresa,
-                nombre_medidor,
+                empresa_config,
                 tipos_seleccionados,
                 1,
                 1,
@@ -627,9 +668,7 @@ class InterfazInforme:
                 mensaje += f"Empresa: {nombre_empresa}\n"
             if nombre_barra:
                 mensaje += f"Barra: {nombre_barra}\n"
-            if nombre_medidor:
-                mensaje += f"Nombre Medidor: {nombre_medidor}\n"
-            if not nombre_barra and not nombre_empresa and not nombre_medidor:
+            if not nombre_barra and not nombre_empresa:
                 mensaje += "Barras: Todas (agrupadas)\n"
             mensaje += f"Archivo: {ruta_destino}"
 
@@ -662,7 +701,7 @@ class InterfazInforme:
         ruta_destino: str,
         nombre_barra: str,
         nombre_empresa: str,
-        nombre_medidor: str,
+        empresa_config: dict | None,
         tipos_seleccionados: list,
         mes_actual: int,
         total_meses: int,
@@ -911,26 +950,50 @@ class InterfazInforme:
                     ),
                 )
 
-            # Para IMPORTACION MWh y TOTAL INGRESOS POR ENERGIA CLP: aplicar filtro nombre_medidor
-            df_para_energia_importacion = df_guardar.copy()
-            if nombre_medidor:
-                if columna_nombre_medidor is None:
-                    print("[WARNING] Nombre Medidor especificado pero no se encontró columna 'nombre_medidor' en Balance Valorizado")
-                else:
-                    df_para_energia_importacion = df_para_energia_importacion[
-                        df_para_energia_importacion[columna_nombre_medidor]
+            # IMPORTACION MWh: filtro por medidor configurado en config (IMPORTACION_MWh)
+            # TOTAL INGRESOS POR ENERGIA CLP: filtro por medidores configurados (TOTAL_INGRESOS_POR_ENERGIA_CLP)
+            medidor_importacion = None
+            medidores_energia_clp = []
+            if empresa_config:
+                m_imp = empresa_config.get("IMPORTACION_MWh")
+                if isinstance(m_imp, str) and m_imp.strip():
+                    medidor_importacion = m_imp.strip()
+                m_energia = empresa_config.get("TOTAL_INGRESOS_POR_ENERGIA_CLP")
+                if isinstance(m_energia, list):
+                    medidores_energia_clp = [str(m).strip() for m in m_energia if str(m).strip()]
+                elif isinstance(m_energia, str) and m_energia.strip():
+                    medidores_energia_clp = [m_energia.strip()]
+
+            df_para_importacion_mwh = df_guardar.copy()
+            df_para_total_energia_clp = df_guardar.copy()
+
+            if columna_nombre_medidor is not None:
+                if medidor_importacion:
+                    df_para_importacion_mwh = df_para_importacion_mwh[
+                        df_para_importacion_mwh[columna_nombre_medidor]
                         .astype(str).str.strip().str.upper()
-                        == nombre_medidor.strip().upper()
+                        == medidor_importacion.upper()
                     ]
                     self.root.after(
                         0,
-                        lambda: self.progress_text_label.config(
-                            text=(
-                                f"[{mes_actual}/{total_meses}] Filtrando por nombre_medidor: "
-                                f"{nombre_medidor}..."
-                            )
+                        lambda m=medidor_importacion, ma=mes_actual, tm=total_meses: self.progress_text_label.config(
+                            text=f"[{ma}/{tm}] IMPORTACION MWh: filtrando por medidor {m}..."
                         ),
                     )
+                if medidores_energia_clp:
+                    df_para_total_energia_clp = df_para_total_energia_clp[
+                        df_para_total_energia_clp[columna_nombre_medidor]
+                        .astype(str).str.strip().str.upper()
+                        .isin([m.upper() for m in medidores_energia_clp])
+                    ]
+                    self.root.after(
+                        0,
+                        lambda m=medidores_energia_clp, ma=mes_actual, tm=total_meses: self.progress_text_label.config(
+                            text=f"[{ma}/{tm}] TOTAL INGRESOS ENERGIA CLP: filtrando por {m}..."
+                        ),
+                    )
+            elif medidor_importacion or medidores_energia_clp:
+                print("[WARNING] Medidores en config pero no se encontró columna 'nombre_medidor' en Balance Valorizado")
 
             self.root.after(0, lambda: self.progress_var.set(calcular_progreso(75)))
 
@@ -972,10 +1035,10 @@ class InterfazInforme:
             datos_encontrados["INGRESOS POR POTENCIA"] = total_potencia
 
             # TOTAL INGRESOS POR ENERGIA CLP: Balance Valorizado, columna monetario
-            # Usa filtro nombre_medidor si aplica
+            # Usa filtro medidores de config (TOTAL_INGRESOS_POR_ENERGIA_CLP)
             if columna_monetario is not None:
                 total_energia = (
-                    df_para_energia_importacion[columna_monetario].dropna().astype(float).sum()
+                    df_para_total_energia_clp[columna_monetario].dropna().astype(float).sum()
                 )
                 datos_encontrados["TOTAL INGRESOS POR ENERGIA CLP"] = total_energia
                 print(
@@ -1004,11 +1067,11 @@ class InterfazInforme:
             datos_encontrados["Compra Venta Energia GM Holdings CLP"] = total_gm_holdings
 
             # Calcular IMPORTACION MWh desde columna fisico_kwh (valor positivo, kWh -> MWh: /1000)
-            # Usa filtro nombre_medidor si aplica
+            # Usa filtro medidor de config (IMPORTACION_MWh)
             importacion_mwh = None
             if columna_fisico_kwh is not None:
                 total_fisico_kwh = (
-                    df_para_energia_importacion[columna_fisico_kwh].dropna().astype(float).sum()
+                    df_para_importacion_mwh[columna_fisico_kwh].dropna().astype(float).sum()
                 )
                 importacion_mwh = abs(total_fisico_kwh) / 1000.0
                 print(

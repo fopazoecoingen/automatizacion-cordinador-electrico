@@ -16,6 +16,29 @@ def _directorio_base_datos() -> Path:
         return Path(sys.executable).resolve().parent
     return Path.cwd()
 
+
+def _carpeta_base_datos() -> Path:
+    """
+    Ruta de la carpeta donde se guardan/leen los datos (ZIPs, descomprimidos).
+    Lee desde config.json -> path_bd. Si no existe, usa bd_data dentro del directorio base.
+    path_bd puede ser relativo (ej: "bd_data") o absoluto (ej: "C:/datos/bd").
+    """
+    base = _directorio_base_datos()
+    try:
+        ruta_config = base / "config.json"
+        if ruta_config.exists():
+            with open(ruta_config, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            path_bd = cfg.get("path_bd", "bd_data")
+            if path_bd:
+                p = Path(path_bd)
+                if not p.is_absolute():
+                    p = base / p
+                return p.resolve()
+    except Exception as e:
+        print(f"[WARNING] No se pudo cargar config.json (path_bd): {e}")
+    return (base / "bd_data").resolve()
+
 from core.descargar_archivos import (
     buscar_archivo_existente_tipo,
     descargar_y_descomprimir_zip_tipo,
@@ -719,13 +742,35 @@ class InterfazInforme:
                 """Calcular el progreso global basado en el progreso de este mes."""
                 return progreso_base + int(porcentaje_mes * progreso_por_mes / 100)
 
-            # Base de datos interna: ruta absoluta en AppData (el ejecutable la encuentra siempre)
-            carpeta_bd = (_directorio_base_datos() / "bd_data").resolve()
+            # Base de datos: ruta desde config.json (path_bd) o bd_data por defecto
+            carpeta_bd = _carpeta_base_datos()
             carpeta_descomprimidos = carpeta_bd / "descomprimidos"
 
-            # Crear carpetas si no existen (necesario para que las descargas se guarden correctamente)
-            carpeta_bd.mkdir(parents=True, exist_ok=True)
-            carpeta_descomprimidos.mkdir(parents=True, exist_ok=True)
+            # Alerta si la ruta no existe; intentar crearla
+            if not carpeta_bd.exists():
+                self.root.after(
+                    0,
+                    lambda: messagebox.showwarning(
+                        "Ruta no encontrada",
+                        f"La ruta de base de datos configurada no existe:\n\n{carpeta_bd}\n\n"
+                        "Se intentará crear la carpeta. Si falla, verifique config.json (path_bd).",
+                        parent=self.root,
+                    ),
+                )
+            try:
+                carpeta_bd.mkdir(parents=True, exist_ok=True)
+                carpeta_descomprimidos.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                self.root.after(
+                    0,
+                    lambda: messagebox.showerror(
+                        "Error al crear carpeta",
+                        f"No se pudo crear la carpeta de base de datos:\n\n{carpeta_bd}\n\n"
+                        f"Error: {e}\n\nVerifique la ruta en config.json (path_bd).",
+                        parent=self.root,
+                    ),
+                )
+                return False
 
             if mes_actual == 1:
                 self.root.after(0, lambda: self.progress_var.set(calcular_progreso(2)))

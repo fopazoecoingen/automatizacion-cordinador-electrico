@@ -98,6 +98,7 @@ xcopy /E /I /Y "core" "%DEST_DIR%\core\" >nul
 copy "interfaz_informe.py" "%DEST_DIR%\" >nul
 
 if exist "config_empresas.json" copy "config_empresas.json" "%DEST_DIR%\" >nul
+if exist "config.json" copy "config.json" "%DEST_DIR%\" >nul
 REM No incluir plantilla: el cliente ingresa la suya con Examinar
 
 echo.

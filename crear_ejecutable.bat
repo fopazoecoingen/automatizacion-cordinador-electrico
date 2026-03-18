@@ -11,10 +11,10 @@ echo.
 
 set DEST_DIR=Generador_Informe_Electrico_Portable
 set ZIP_OUT=Generador_Informe_Electrico_Portable.zip
-set WINPYTHON_URL=https://github.com/winpython/winpython/releases/download/17.2.20251222post1/WinPython64-3.13.11.0dot_post1.zip
+set WINPYTHON_URL=https://github.com/winpython/winpython/releases/download/17.2.20260307/WinPython64-3.13.12.0dotrc.zip
 
 REM Paso 1: Descargar WinPython si no existe
-set WINPY_ZIP=WinPython64-3.13.11.0dot_post1.zip
+set WINPY_ZIP=WinPython64-3.13.12.0dotrc.zip
 if not exist "%WINPY_ZIP%" (
     echo Paso 1: Descargando WinPython ~27 MB...
     powershell -NoProfile -Command ^
@@ -51,32 +51,51 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM WinPython extrae una carpeta WPy64-313110 o similar. Renombrar a python_embed.
+REM WinPython extrae una carpeta (WPy*, Winpython*, o la unica subcarpeta). Renombrar a python_embed.
 set "WP_FOLDER="
 for /d %%d in ("%DEST_DIR%\WPy*") do set "WP_FOLDER=%%d"
 for /d %%d in ("%DEST_DIR%\Winpython*") do if not defined WP_FOLDER set "WP_FOLDER=%%d"
+for /d %%d in ("%DEST_DIR%\WinPython*") do if not defined WP_FOLDER set "WP_FOLDER=%%d"
 for /d %%d in ("%DEST_DIR%\*") do if not defined WP_FOLDER set "WP_FOLDER=%%d"
 if defined WP_FOLDER (
     move "!WP_FOLDER!" "%DEST_DIR%\python_embed" >nul 2>&1
 )
 if not exist "%DEST_DIR%\python_embed" (
-    echo ERROR: No se pudo organizar WinPython
+    echo ERROR: No se pudo organizar WinPython. Verifique que %WINPY_ZIP% se extrajo correctamente.
+    dir "%DEST_DIR%"
     pause
     exit /b 1
 )
 
-REM Buscar python.exe principal en el paquete (excluir Scripts)
+REM Buscar python.exe en python_embed (priorizar python-3.x sobre Scripts)
 set "PYTHON_FINAL="
-for /f "delims=" %%f in ('dir /s /b "%DEST_DIR%\python_embed\python.exe" 2^>nul ^| findstr /v /i "Scripts"') do (
-    if not defined PYTHON_FINAL set "PYTHON_FINAL=%%f" & goto :pip_ready
+set "PYTHON_REL="
+for /f "delims=" %%f in ('dir /s /b /a-d "%DEST_DIR%\python_embed\python.exe" 2^>nul') do (
+    echo %%f | findstr /i "Scripts" >nul
+    if errorlevel 1 (
+        set "PYTHON_FINAL=%%f"
+        set "PYTHON_REL=%%f"
+        goto :pip_ready
+    )
+)
+for /f "delims=" %%f in ('dir /s /b /a-d "%DEST_DIR%\python_embed\python.exe" 2^>nul') do (
+    set "PYTHON_FINAL=%%f"
+    set "PYTHON_REL=%%f"
+    goto :pip_ready
 )
 :pip_ready
 
 if not defined PYTHON_FINAL (
-    echo ERROR: No se encontro python.exe en el paquete
+    echo ERROR: No se encontro python.exe en el paquete.
+    echo Estructura extraida:
+    dir /s /b "%DEST_DIR%\python_embed" 2^>nul
     pause
     exit /b 1
 )
+
+REM Ruta relativa para el launcher (ej: python_embed\python-3.13.12\python.exe)
+set "PYTHON_REL=!PYTHON_FINAL:*python_embed\=!"
+set "PYTHON_REL=python_embed\!PYTHON_REL!"
 
 echo.
 echo Paso 4: Instalando dependencias...
@@ -107,7 +126,7 @@ set "LAUNCHER=%DEST_DIR%\Generador Informe Electrico.bat"
 echo @echo off > "%LAUNCHER%"
 echo chcp 65001 ^>nul >> "%LAUNCHER%"
 echo cd /d "%%~dp0" >> "%LAUNCHER%"
-echo "python_embed\python\python.exe" interfaz_informe.py >> "%LAUNCHER%"
+echo "!PYTHON_REL!" interfaz_informe.py >> "%LAUNCHER%"
 echo if errorlevel 1 pause >> "%LAUNCHER%"
 
 echo.

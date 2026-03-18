@@ -34,6 +34,7 @@ venv.bak/
 # IDE
 .vscode/
 .idea/
+.vs/
 *.swp
 *.swo
 *~
@@ -79,9 +80,16 @@ dist/
 *.spec
 !GeneradorInforme.spec
 *.exe
+publish_temp/
+Entregable_Cliente/
+Publish_Cliente/
+bin/
+obj/
+*.pdb
 
 # Paquetes de distribución (regenerables con crear_ejecutable.bat)
 Paquete Distribucion/
+Paquete para Cliente/
 Generador_Informe_Electrico_Portable/
 Generador_Informe_Electrico.zip
 Generador_Informe_Electrico_Portable.zip

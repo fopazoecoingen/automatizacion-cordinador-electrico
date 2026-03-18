@@ -371,7 +371,7 @@ public partial class MainForm : Form
 
         double totalMonetario = ExcelLecturaService.LeerTotalIngresosPotenciaFirme(anyo, mes, carpetaBd, nombreEmpresa, conceptoFiltro) ?? 0;
         if (totalMonetario == 0 && dfGuardar.Count > 0 && dfGuardar[0].ContainsKey("monetario"))
-            totalMonetario = dfGuardar.Sum(f => ParseDouble(f.GetValueOrDefault("monetario")?.ToString()) ?? 0);
+            totalMonetario = dfGuardar.Sum(f => ToDouble(f.GetValueOrDefault("monetario")));
 
         var totalIt = ExcelLecturaService.LeerIngresosPorIt(anyo, mes, carpetaBd, nombreEmpresa);
         var totalPotencia = ExcelLecturaService.LeerIngresosPorPotencia(anyo, mes, carpetaBd, nombreEmpresa);
@@ -382,7 +382,7 @@ public partial class MainForm : Form
         var dfTotalEnergia = dfGuardar;
         if (medidoresEnergia.Count > 0 && dfGuardar.Count > 0 && dfGuardar[0].ContainsKey("nombre_medidor"))
             dfTotalEnergia = dfGuardar.Where(f => medidoresEnergia.Contains((f.GetValueOrDefault("nombre_medidor")?.ToString() ?? "").Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
-        double totalEnergia = dfTotalEnergia.Sum(f => ParseDouble(f.GetValueOrDefault("monetario")?.ToString()) ?? 0);
+        double totalEnergia = dfTotalEnergia.Count > 0 ? ToDouble(dfTotalEnergia[0].GetValueOrDefault("monetario")) : 0;
 
         var nemotecnicoSscc = empresaConfig?.SSCC_NEMOTECNICO?.Trim();
         var filtroSscc = !string.IsNullOrEmpty(nemotecnicoSscc) ? nemotecnicoSscc : nombreEmpresa;
@@ -405,8 +405,8 @@ public partial class MainForm : Form
         };
         if (totalIt.HasValue) pares.Add(("INGRESOS POR IT POTENCIA", totalIt.Value));
         if (totalPotencia.HasValue) pares.Add(("INGRESOS POR POTENCIA", totalPotencia.Value));
-        // Plantilla espera valores en miles de pesos: Balance/Balance Contratos entregan en escala x100
-        if (totalEnergia != 0) pares.Add(("TOTAL INGRESOS POR ENERGIA CLP", totalEnergia / 100.0));
+        // Valor directo (ParseMonetario lee el string formateado como Python)
+        if (totalEnergia != 0) pares.Add(("TOTAL INGRESOS POR ENERGIA CLP", totalEnergia));
         if (!string.IsNullOrEmpty(nombreEmpresa) && totalSscc.HasValue) pares.Add(("TOTAL INGRESOS POR SSCC CLP", totalSscc.Value));
         if (totalGmHoldings.HasValue) pares.Add(("Compra Venta Energia GM Holdings CLP", totalGmHoldings.Value / 1000.0));
         if (importacionMwh.HasValue) pares.Add(("IMPORTACION MWh", importacionMwh.Value));
@@ -429,6 +429,22 @@ public partial class MainForm : Form
             });
         }
         catch { }
+    }
+
+    /// <summary>Convierte valor monetario a double sin perder decimales (ParseDouble eliminaba la coma en "325161639,078").</summary>
+    private static double ToDouble(object? val)
+    {
+        if (val is double d) return d;
+        if (val is int i) return i;
+        if (val is float f) return f;
+        if (val is decimal dec) return (double)dec;
+        var s = (val?.ToString() ?? "").Trim().Replace("$", "").Replace(" ", "");
+        if (string.IsNullOrEmpty(s)) return 0;
+        if (s.Contains(",")) s = s.Replace(".", "").Replace(",", ".");
+        else if (!s.Contains(".")) s = s.Replace(".", "").Replace(",", ".");
+        if (!double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var v)) return 0;
+        if (v >= 1e9 && Math.Abs(v - Math.Floor(v)) < 1e-9) return v / 1000;
+        return v;
     }
 
     private static double? ParseDouble(string? s)

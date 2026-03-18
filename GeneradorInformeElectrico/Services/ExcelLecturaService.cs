@@ -173,10 +173,13 @@ public static class ExcelLecturaService
     }
 
     /// <summary>Lee Balance Valorizado y retorna datos para total monetario, filtros, etc.</summary>
+    /// <remarks>Usa Excel COM para monetario (obtiene valor formateado como Python/openpyxl). ClosedXML devuelve raw sin formato.</remarks>
     public static BalanceData? LeerBalanceValorizado(int anyo, int mes, string carpetaBase)
     {
         var archivo = EncontrarArchivoBalance(anyo, mes, carpetaBase);
         if (archivo == null) return null;
+        var comResult = LeerBalanceValorizadoCom(archivo);
+        if (comResult != null) return comResult;
         try
         {
             using var wb = new XLWorkbook(archivo);
@@ -192,12 +195,127 @@ public static class ExcelLecturaService
                 foreach (var kv in cols)
                 {
                     var cell = ws.Cell(r, kv.Value + 1);
-                    var strVal = cell.GetString();
-                    row[kv.Key] = ParseDouble(strVal) ?? (object?)strVal;
+                    object? val;
+                    if (string.Equals(kv.Key, "monetario", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var s = cell.GetFormattedString();
+                        if (string.IsNullOrWhiteSpace(s)) s = cell.GetString();
+                        var parsed = ParseMonetario(s);
+                        if (parsed.HasValue)
+                            val = parsed.Value;
+                        else if (cell.TryGetValue(out double d))
+                            val = RestaurarDecimalesMonetario(d);
+                        else if (cell.TryGetValue(out int i))
+                            val = RestaurarDecimalesMonetario(i);
+                        else
+                            val = (object?)s ?? "";
+                    }
+                    else if (cell.TryGetValue(out double d))
+                        val = d;
+                    else if (cell.TryGetValue(out int i))
+                        val = (double)i;
+                    else
+                    {
+                        var s = cell.GetString();
+                        val = ParseDouble(s) ?? (object?)s;
+                    }
+                    row[kv.Key] = val ?? (object?)"";
                 }
                 datos.Add(row);
             }
             return new BalanceData(datos, cols);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Lee Balance con Excel COM para obtener monetario formateado (Text = "325.161.639,078" como Python).</summary>
+    private static BalanceData? LeerBalanceValorizadoCom(string archivo)
+    {
+        if (string.IsNullOrEmpty(archivo) || !File.Exists(archivo)) return null;
+        try
+        {
+            var excelType = Type.GetTypeFromProgID("Excel.Application");
+            if (excelType == null) return null;
+            var excel = Activator.CreateInstance(excelType);
+            if (excel == null) return null;
+            try
+            {
+                dynamic ex = excel;
+                ex.Visible = false;
+                ex.DisplayAlerts = false;
+                dynamic wb = ExcelComHelper.RetryOnBusy(() => ex.Workbooks.Open(archivo, 0, true));
+                dynamic ws = null;
+                for (var i = 1; i <= wb.Worksheets.Count; i++)
+                {
+                    var name = (string)wb.Worksheets.Item(i).Name;
+                    if (name.IndexOf("Balance Valorizado", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        ws = wb.Worksheets.Item(i);
+                        break;
+                    }
+                }
+                if (ws == null) { wb.Close(false); return null; }
+                int filaHeader = -1;
+                var cols = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (var r = 1; r <= 20; r++)
+                {
+                    for (var c = 1; c <= 50; c++)
+                    {
+                        var val = (ws.Cells[r, c].Text ?? "").ToString().Trim();
+                        if (string.IsNullOrWhiteSpace(val)) continue;
+                        var norm = val.ToLowerInvariant().Replace(" ", "_");
+                        if (norm == "barra") cols["barra"] = c - 1;
+                        else if (norm == "monetario") cols["monetario"] = c - 1;
+                        else if (norm.Contains("nombre_corto") && norm.Contains("empresa")) cols["nombre_corto_empresa"] = c - 1;
+                        else if (norm.Contains("fisico") && norm.Contains("kwh")) cols["fisico_kwh"] = c - 1;
+                        else if (norm.Contains("nombre_medidor")) cols["nombre_medidor"] = c - 1;
+                    }
+                    if (cols.Count >= 2) { filaHeader = r; break; }
+                }
+                if (filaHeader < 0) { wb.Close(false); return null; }
+                var datos = new List<Dictionary<string, object>>();
+                var usedR = ws.UsedRange;
+                int maxRow = usedR != null ? (int)usedR.Row + (int)usedR.Rows.Count - 1 : filaHeader + 100;
+                for (var r = filaHeader + 2; r <= maxRow; r++)
+                {
+                    var row = new Dictionary<string, object>();
+                    foreach (var kv in cols)
+                    {
+                        var cell = ws.Cells[r, kv.Value + 1];
+                        object? val;
+                        if (string.Equals(kv.Key, "monetario", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var text = (cell.Text ?? "").ToString().Trim();
+                            var parsed = ParseMonetario(text);
+                            if (parsed.HasValue)
+                                val = parsed.Value;
+                            else
+                            {
+                                var raw = cell.Value;
+                                if (raw is double d) val = RestaurarDecimalesMonetario(d);
+                                else if (raw is int i) val = RestaurarDecimalesMonetario(i);
+                                else val = (object?)text ?? "";
+                            }
+                        }
+                        else
+                        {
+                            var raw = cell.Value;
+                            if (raw is double d) val = d;
+                            else if (raw is int i) val = (double)i;
+                            else
+                            {
+                                var s = (raw?.ToString() ?? "").Trim();
+                                val = ParseDouble(s) ?? (object?)s;
+                            }
+                        }
+                        row[kv.Key] = val ?? (object?)"";
+                    }
+                    datos.Add(row);
+                }
+                wb.Close(false);
+                return new BalanceData(datos, cols);
+            }
+            finally { try { ((dynamic)excel).Quit(); } catch { } }
         }
         catch { return null; }
     }
@@ -911,7 +1029,7 @@ public static class ExcelLecturaService
         return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
-    /// <summary>Python _parsear_valor_monetario: punto=miles, coma=decimal (ej: 46.709.214,53).</summary>
+    /// <summary>Parsea valor monetario tal cual viene de Excel. Soporta: 325161639,078 (coma=decimal) y 32.516.163.908 (puntos=miles, último=decimal).</summary>
     private static double? ParseMonetario(object? val)
     {
         if (val == null) return null;
@@ -919,8 +1037,44 @@ public static class ExcelLecturaService
         if (val is int i) return (double)i;
         var s = (val.ToString() ?? "").Trim();
         if (string.IsNullOrEmpty(s)) return null;
+        s = s.Replace("$", "").Replace(" ", "").Trim();
+        if (s.Contains(","))
+        {
+            s = s.Replace(".", "").Replace(",", ".");
+            return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v1) ? v1 : null;
+        }
+        if (s.Contains("."))
+        {
+            var parts = s.Split('.');
+            if (parts.Length >= 2)
+            {
+                var intPart = string.Join("", parts.Take(parts.Length - 1));
+                var decPart = parts[^1];
+                if (int.TryParse(intPart, NumberStyles.None, CultureInfo.InvariantCulture, out var iVal) &&
+                    int.TryParse(decPart, NumberStyles.None, CultureInfo.InvariantCulture, out var dVal))
+                {
+                    var divisor = Math.Pow(10, decPart.Length);
+                    return iVal + dVal / divisor;
+                }
+            }
+        }
         s = s.Replace(".", "").Replace(",", ".");
-        return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : null;
+        if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v2))
+        {
+            // Excel a veces devuelve 325161639078 (sin coma) cuando el valor es 325161639,078 → restaurar decimales
+            if (v2 >= 1e9 && Math.Abs(v2 - Math.Floor(v2)) < 1e-9)
+                return v2 / 1000;
+            return v2;
+        }
+        return null;
+    }
+
+    /// <summary>Cuando el valor crudo es double sin decimales (ej. 325161639078), restaurar 325161639,078.</summary>
+    private static double RestaurarDecimalesMonetario(double v)
+    {
+        if (v >= 1e9 && Math.Abs(v - Math.Floor(v)) < 1e-9)
+            return v / 1000;
+        return v;
     }
 
     /// <summary>Python leer_compra_venta: solo sección Físicos (excluir Financieros).</summary>
